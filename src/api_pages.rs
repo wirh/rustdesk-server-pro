@@ -480,7 +480,7 @@ document.addEventListener('DOMContentLoaded',applyI18n);
 
 fn page(title: &str, body: &str) -> String {
     format!(
-        "<!doctype html><html lang=\"zh\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title><style>{CSS}</style></head><body>{I18N_JS}{body}</body></html>"
+        "<!doctype html><html lang=\"zh\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><link rel=\"icon\" type=\"image/png\" href=\"/favicon.ico\"><title>{title}</title><style>{CSS}</style></head><body>{I18N_JS}{body}</body></html>"
     )
 }
 

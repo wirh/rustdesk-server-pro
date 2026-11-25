@@ -3537,6 +3537,10 @@ struct ClientDownload {
 const IOS_APP_STORE_URL: &str =
     "https://apps.apple.com/us/app/rustdesk-remote-desktop/id1581225015";
 
+/// Console favicon PNG (issue #14, option B): AI-designed icon, served at
+/// /favicon.ico and referenced from every console page via page().
+const FAVICON_PNG: &[u8] = include_bytes!("../ui/icons/console-favicon.png");
+
 /// (id, display name, filename suffix) for the other-platform downloads,
 /// in display order. Suffixes are matched against the release's actual
 /// asset names with a `rustdesk-{version}-` prefix (verified against the
@@ -5231,6 +5235,15 @@ async fn download(
 
 // ------------------------------ pages & router ------------------------------
 
+/// Console favicon (issue #14): static PNG bytes, no state, no auth.
+async fn favicon() -> Response {
+    let mut headers = HeaderMap::new();
+    if let Ok(v) = "image/png".parse::<header::HeaderValue>() {
+        headers.insert(header::CONTENT_TYPE, v);
+    }
+    (StatusCode::OK, headers, FAVICON_PNG).into_response()
+}
+
 async fn root() -> Response {
     let mut headers = HeaderMap::new();
     if let Ok(v) = "/console".parse::<header::HeaderValue>() {
@@ -6766,6 +6779,10 @@ fn build_router_part(state: Arc<ApiState>, part: RouterPart) -> Router {
     // route once, outside the plane blocks — registering it in both
     // blocks panics the merged All router with a duplicate route.
     r = r.route("/api/captcha", get(captcha_image));
+    // Console favicon (issue #14): registered once, outside the plane
+    // blocks like /api/captcha, so both the console and the API
+    // listeners answer it (the OIDC login page is on the public plane).
+    r = r.route("/favicon.ico", get(favicon));
     if part != RouterPart::Console {
         // official client endpoints
         r = r
@@ -9974,6 +9991,46 @@ mod tests {
         assert_eq!(valid_public_ip(" 203.0.113.7\n"), "203.0.113.7");
         assert_eq!(valid_public_ip("not an ip"), "");
         assert_eq!(valid_public_ip(""), "");
+    }
+
+    // ---- issue #14: console favicon ----
+
+    #[test]
+    fn favicon_handler_returns_console_png_bytes() {
+        let resp = v39_block(favicon());
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("image/png")
+        );
+        let bytes = v39_block(hyper::body::to_bytes(resp.into_body()))
+            .unwrap_or_default()
+            .to_vec();
+        assert_eq!(bytes, FAVICON_PNG);
+        // the embedded bytes are the console icon file on disk
+        let on_disk = std::fs::read(format!(
+            "{}/ui/icons/console-favicon.png",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap_or_default();
+        assert_eq!(bytes, on_disk);
+        // a real 32x32 PNG (signature + IHDR dimensions), not a placeholder
+        assert_eq!(&bytes[0..8], b"\x89PNG\r\n\x1a\n");
+        let w = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
+        let h = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
+        assert_eq!((w, h), (32, 32));
+    }
+
+    #[test]
+    fn console_pages_link_favicon() {
+        for html in [api_pages::login_page(), api_pages::register_page()] {
+            assert!(
+                html.contains("<link rel=\"icon\" type=\"image/png\" href=\"/favicon.ico\">"),
+                "console page must link the favicon"
+            );
+        }
     }
 
 }
