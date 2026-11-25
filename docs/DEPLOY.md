@@ -701,6 +701,12 @@ hbbr 容器里只有日志（默认不启用中继密钥校验，不生成密钥
 - 验证：cargo test 150/150（debug 与 release 各两遍；lib 134 + hbbr 15 + 集成 1；含新增轮询单测 10 个）；新增轮询端到端 39/39（debug 与 release 各两遍：API 加入/移除、server.env 字节级比对、删除同步、私网拒绝、重复加入、自动创建、实时列表）；全量回归 156 次运行全绿（39 套件 × debug/release × 2 轮；矩阵内 6 次失败均非产品原因：1 次与并行验证代理的端口冲突、5 次沙箱出口间歇性 403/不可达，修测试/补跑后全过）；ARM 两个变体 qemu 控制台套件 28/28 ×2；新增轮询界面端到端 33/33（Chromium，中英双语）；i18n 词典中英 355/355 对齐。实时生效经 hbbs 回环控制台 rs 命令验证（沙箱拦 UDP，真打洞探针跑不了）。本版 Rust 改动集中在 src/api.rs、src/api_pages.rs 与 src/rendezvous_server.rs（全平台统一逻辑），无新增 Windows/release 专属分支；relay-agent 未改动。
 - 真机确认项：控制台按钮点一下即生效（轮询状态行变化）；删节点后 server.env 里条目消失；重启服务端后轮询列表仍在。
 
+## v46.3（预览版）：控制台加 favicon（A 双屏新图标）
+
+- 背景（2026-11-25）：issue #14（yguangg 报告）：WebUI 没有图标，浏览器标签页与收藏夹里难以辨认。用户选了 AI 重新设计、与现有图标有点区别的方案。
+- 新增：控制台 favicon。登录、注册、控制台、OIDC 页的 head 里都带 `<link rel="icon" type="image/png" href="/favicon.ico">`，`/favicon.ico` 由 hbbs 直接提供 ui/icons/console-favicon.png（32×32）。新图标是 A 双屏设计：蓝渐变圆角方块上两个重叠屏幕，前屏带光标，与现有图标同家族、有区别。
+- 升级：停服 → 只换 hbbs → 启动（favicon 只动 hbbs；hbbr、rdsvc、启动脚本、地理库不变；中继节点无需更新）；控制台勾选「检测预览版」后一键更新提供 v46.3，手动下载都可。
+
 ## API 调用说明
 
 服务端在 API 端口上提供 HTTP 接口：官方客户端用的登录/设备协议接口，以及控制台用的管理接口（生成客户端、设备列表、在线更新等）。本节以 src/api.rs 的实际路由表为准；示例中的 token、密钥已截断或替换为占位符，格式与真实返回一致。以下示例均已在本地 hbbs 上实测跑通（curl 实测：`/api/me`、`/api/devices`、`/api/client-config`、`/api/client-downloads`、`/api/admin/update/status`、`/api/tokens`、`/api/login`、`/api/peers`、`/api/users`、`/api/currentUser`、`/api/admin/gen-client`、`/api/admin/gen-clients`、下载链接及删除后失效）。
