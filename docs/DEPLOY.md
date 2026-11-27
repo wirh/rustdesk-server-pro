@@ -707,6 +707,12 @@ hbbr 容器里只有日志（默认不启用中继密钥校验，不生成密钥
 - 新增：控制台 favicon。登录、注册、控制台、OIDC 页的 head 里都带 `<link rel="icon" type="image/png" href="/favicon.ico">`，`/favicon.ico` 由 hbbs 直接提供 ui/icons/console-favicon.png（32×32）。新图标是 A 双屏设计：蓝渐变圆角方块上两个重叠屏幕，前屏带光标，与现有图标同家族、有区别。
 - 升级：停服 → 只换 hbbs → 启动（favicon 只动 hbbs；hbbr、rdsvc、启动脚本、地理库不变；中继节点无需更新）；控制台勾选「检测预览版」后一键更新提供 v46.3，手动下载都可。
 
+## v46.4（预览版）：配置二维码（安卓扫码导入配置）
+
+- 背景（2026-11-27）：安卓客户端在服务器设置页带扫码导入配置功能；控制台「官方客户端手动配置」卡片此前只有一键复制配置串，手机上还要手动粘贴。
+- 新增：手动配置卡片里加配置二维码，内容是 `config=` 加配置串（与一键复制的配置串同一编码）；安卓客户端在服务器设置页点扫码图标，扫此码即可导入配置。二维码由控制台页面本地绘制（内嵌 MIT 许可证的 qrcode-generator 裁剪版），无新接口、无外部请求。
+- 升级：停服 → 只换 hbbs → 启动（只动 hbbs；hbbr、rdsvc、启动脚本、地理库不变；中继节点无需更新）；控制台勾选「检测预览版」后一键更新提供 v46.4，手动下载都可。
+
 ## API 调用说明
 
 服务端在 API 端口上提供 HTTP 接口：官方客户端用的登录/设备协议接口，以及控制台用的管理接口（生成客户端、设备列表、在线更新等）。本节以 src/api.rs 的实际路由表为准；示例中的 token、密钥已截断或替换为占位符，格式与真实返回一致。以下示例均已在本地 hbbs 上实测跑通（curl 实测：`/api/me`、`/api/devices`、`/api/client-config`、`/api/client-downloads`、`/api/admin/update/status`、`/api/tokens`、`/api/login`、`/api/peers`、`/api/users`、`/api/currentUser`、`/api/admin/gen-client`、`/api/admin/gen-clients`、下载链接及删除后失效）。

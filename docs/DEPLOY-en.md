@@ -607,6 +607,12 @@ Environment variable `TEST_HBBS=no`: skips hbbs's self-connection test at startu
 - New: console favicon. The login, register, console, and OIDC pages all carry `<link rel="icon" type="image/png" href="/favicon.ico">` in their head, and `/favicon.ico` is served directly by hbbs from ui/icons/console-favicon.png (32×32). The new icon is the A dual-screen design: two overlapping screens on a blue-gradient rounded square, the front screen carrying a cursor.
 - Upgrade: stop the service → replace hbbs only → start (the favicon touches hbbs only; hbbr, rdsvc, launcher scripts, and the geo database are unchanged; deployed relay nodes need no update); with "Check prereleases" ticked, the one-click updater offers v46.3, and a manual download works too.
 
+## v46.4 (preview): Config QR code (Android scan-to-import)
+
+- Background (2026-11-27): the Android client can import server settings by scanning a QR code from its server settings page; the console's manual-config card previously only offered the one-click copy of the config string, which still had to be pasted by hand on the phone.
+- New: a config QR code on the manual-config card. Its content is `config=` plus the config string (the same encoding as the one-click-copy config string); scanning it from the Android client's server settings page imports the configuration. The QR code is drawn locally by the console page (an embedded, trimmed MIT-licensed qrcode-generator), with no new endpoints and no external requests.
+- Upgrade: stop the service → replace hbbs only → start (hbbs only; hbbr, rdsvc, launcher scripts, and the geo database are unchanged; deployed relay nodes need no update); with "Check prereleases" ticked, the one-click updater offers v46.4, and a manual download works too.
+
 ## API Usage Notes
 
 The server provides HTTP interfaces on the API port: the login/device protocol interfaces the official client uses, and the admin interfaces the console uses (generating clients, device list, online updates, etc.). This section follows the actual route table in src/api.rs; tokens and keys in the examples are truncated or replaced with placeholders, with formats matching real responses. All examples below have been actually run against a local hbbs (curl-tested: `/api/me`, `/api/devices`, `/api/client-config`, `/api/client-downloads`, `/api/admin/update/status`, `/api/tokens`, `/api/login`, `/api/peers`, `/api/users`, `/api/currentUser`, `/api/admin/gen-client`, `/api/admin/gen-clients`, download links, and invalidation after deletion).
