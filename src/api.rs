@@ -23,7 +23,7 @@ use axum::{
     extract::{ConnectInfo, Extension, Form, Path, Query},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 use hbb_common::{anyhow, log, tokio, ResultType};
@@ -54,6 +54,9 @@ pub struct ApiState {
     tpl_job: std::sync::Mutex<TplJob>,
     upd_job: std::sync::Mutex<UpdJob>,
     guard: std::sync::Mutex<AuthGuard>,
+    /// Cached effective lockout config (settings over env defaults),
+    /// refreshed at most every LOCK_CFG_TTL and on settings save.
+    lock_cfg: std::sync::Mutex<Option<(std::time::Instant, LockCfg)>>,
     /// Cached latest-release data for /api/client-downloads:
     /// (fetched_at, version, platforms). The GitHub API allows only 60
     /// unauthenticated requests per hour per shared IP, and the console
@@ -89,7 +92,7 @@ pub struct TplJob {
 /// NOTE: this deliberately does NOT live in version.rs — build.rs
 /// regenerates that file on every build (see hbb_common::gen_version)
 /// and would wipe a hand-written constant.
-const PRO_VERSION: &str = "46";
+const PRO_VERSION: &str = "47";
 
 /// Full installed version: the preview build's complete number (e.g.
 /// "45.1") when baked in at build time via PRO_FULL_VERSION (see
@@ -144,6 +147,76 @@ struct LockHit {
     secs: i64,
 }
 
+/// Which counters a failed attempt feeds. `IpFirst` (default): when
+/// the source is a public IP only the IP counter runs — locking a
+/// shared NAT/router address would lock out every user behind it, so
+/// for non-public sources only the account counter runs. `Both` is
+/// the pre-strategy behaviour (both counters always run).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LockStrategy {
+    IpFirst,
+    Both,
+}
+
+/// Effective lockout parameters: RD_AUTH_* env vars are the initial
+/// defaults, the lock_* rows in the settings table override them.
+#[derive(Clone)]
+struct LockCfg {
+    strategy: LockStrategy,
+    acct_enabled: bool,
+    ip_enabled: bool,
+    acct_max: i64,
+    ip_max: i64,
+    window: i64,
+    acct_secs: i64,
+    ip_secs: i64,
+}
+
+impl LockCfg {
+    fn from_env() -> Self {
+        LockCfg {
+            strategy: LockStrategy::IpFirst,
+            acct_enabled: true,
+            ip_enabled: true,
+            acct_max: auth_cfg("RD_AUTH_FAIL_MAX", 5),
+            ip_max: auth_cfg("RD_AUTH_IP_FAIL_MAX", 30),
+            window: auth_cfg("RD_AUTH_WINDOW_SECS", 600),
+            acct_secs: auth_cfg("RD_AUTH_LOCK_SECS", 900),
+            ip_secs: auth_cfg("RD_AUTH_LOCK_SECS", 900),
+        }
+    }
+
+    /// (account scope active, ip scope active) for one attempt from
+    /// `ip`. An empty/unparseable source can only feed the account
+    /// counter.
+    fn scopes(&self, ip: &str) -> (bool, bool) {
+        match self.strategy {
+            LockStrategy::Both => (self.acct_enabled, self.ip_enabled),
+            LockStrategy::IpFirst => {
+                let public = ip
+                    .parse::<std::net::IpAddr>()
+                    .map(|a| match a {
+                        // A dual-stack listener reports IPv4 sources
+                        // in v4-mapped form; judge them as IPv4, or
+                        // every loopback/private v4 source would look
+                        // like a public IPv6 one.
+                        std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+                            Some(v4) => is_public_ip(std::net::IpAddr::V4(v4)),
+                            None => is_public_ip(a),
+                        },
+                        _ => is_public_ip(a),
+                    })
+                    .unwrap_or(false);
+                if public {
+                    (false, self.ip_enabled)
+                } else {
+                    (self.acct_enabled, false)
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct AuthGuard {
     acct: HashMap<String, FailState>,
@@ -159,17 +232,22 @@ impl AuthGuard {
         }
     }
 
-    /// Seconds of lock remaining for this (account, ip) pair; 0 = allowed.
-    fn locked_remaining(&mut self, user: &str, ip: &str, t: i64) -> i64 {
-        let window = auth_cfg("RD_AUTH_WINDOW_SECS", 600);
+    /// Seconds of lock remaining for this (account, ip) pair under
+    /// the strategy's active scopes; 0 = allowed.
+    fn locked_remaining(&mut self, user: &str, ip: &str, t: i64, cfg: &LockCfg) -> i64 {
+        let (use_acct, use_ip) = cfg.scopes(ip);
         let mut remain = 0i64;
-        if let Some(st) = self.acct.get_mut(user) {
-            Self::prune_state(st, t, window);
-            remain = remain.max(st.locked_until - t);
+        if use_acct {
+            if let Some(st) = self.acct.get_mut(user) {
+                Self::prune_state(st, t, cfg.window);
+                remain = remain.max(st.locked_until - t);
+            }
         }
-        if let Some(st) = self.ip.get_mut(ip) {
-            Self::prune_state(st, t, window);
-            remain = remain.max(st.locked_until - t);
+        if use_ip {
+            if let Some(st) = self.ip.get_mut(ip) {
+                Self::prune_state(st, t, cfg.window);
+                remain = remain.max(st.locked_until - t);
+            }
         }
         remain.max(0)
     }
@@ -179,11 +257,11 @@ impl AuthGuard {
         key: &str,
         scope: &'static str,
         max: i64,
+        base: i64,
+        window: i64,
         t: i64,
         hits: &mut Vec<LockHit>,
     ) {
-        let window = auth_cfg("RD_AUTH_WINDOW_SECS", 600);
-        let base = auth_cfg("RD_AUTH_LOCK_SECS", 900);
         let st = map.entry(key.to_string()).or_default();
         Self::prune_state(st, t, window);
         if st.locked_until > t {
@@ -207,29 +285,74 @@ impl AuthGuard {
     }
 
     /// Record one failed password attempt; returns any locks it engaged.
-    fn record_failure(&mut self, user: &str, ip: &str, t: i64) -> Vec<LockHit> {
+    fn record_failure(&mut self, user: &str, ip: &str, t: i64, cfg: &LockCfg) -> Vec<LockHit> {
+        let (use_acct, use_ip) = cfg.scopes(ip);
         let mut hits = Vec::new();
-        if !user.is_empty() {
+        if use_acct && !user.is_empty() {
             Self::note_failure_in(
                 &mut self.acct,
                 user,
                 "account",
-                auth_cfg("RD_AUTH_FAIL_MAX", 5),
+                cfg.acct_max,
+                cfg.acct_secs,
+                cfg.window,
                 t,
                 &mut hits,
             );
         }
-        if !ip.is_empty() {
+        if use_ip && !ip.is_empty() {
             Self::note_failure_in(
                 &mut self.ip,
                 ip,
                 "ip",
-                auth_cfg("RD_AUTH_IP_FAIL_MAX", 30),
+                cfg.ip_max,
+                cfg.ip_secs,
+                cfg.window,
                 t,
                 &mut hits,
             );
         }
         hits
+    }
+
+    /// Currently locked (key, locked_until, level) rows of one scope,
+    /// expired entries pruned first.
+    fn locked_list(
+        map: &mut HashMap<String, FailState>,
+        t: i64,
+        window: i64,
+    ) -> Vec<(String, i64, u32)> {
+        let mut out: Vec<(String, i64, u32)> = map
+            .iter_mut()
+            .filter_map(|(k, st)| {
+                Self::prune_state(st, t, window);
+                if st.locked_until > t {
+                    Some((k.clone(), st.locked_until, st.level))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    fn locked_ips(&mut self, t: i64, window: i64) -> Vec<(String, i64, u32)> {
+        Self::locked_list(&mut self.ip, t, window)
+    }
+
+    fn locked_accounts(&mut self, t: i64, window: i64) -> Vec<(String, i64, u32)> {
+        Self::locked_list(&mut self.acct, t, window)
+    }
+
+    /// Manually clear one lock (admin unlock). True when an entry
+    /// existed.
+    fn unlock(&mut self, kind: &str, key: &str) -> bool {
+        match kind {
+            "ip" => self.ip.remove(key).is_some(),
+            "account" => self.acct.remove(key).is_some(),
+            _ => false,
+        }
     }
 
     /// A successful login clears the account's failure counter. An
@@ -289,22 +412,94 @@ fn auth_log(event: &str, kind: &str, user: &str, ip: &str, detail: &str) {
     }
 }
 
-fn guard_locked(st: &ApiState, user: &str, ip: &str) -> i64 {
+/// LockCfg cache TTL: settings changes land within this window even
+/// without the explicit invalidation on settings save.
+const LOCK_CFG_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+async fn current_lock_cfg(st: &ApiState) -> LockCfg {
+    if let Ok(cache) = st.lock_cfg.lock() {
+        if let Some((at, cfg)) = &*cache {
+            if at.elapsed() < LOCK_CFG_TTL {
+                return cfg.clone();
+            }
+        }
+    }
+    let mut cfg = LockCfg::from_env();
+    let pool = &st.pool;
+    // Settings rows override the env defaults when present and valid.
+    if get_setting(pool, "lock_strategy").await == "both" {
+        cfg.strategy = LockStrategy::Both;
+    }
+    match get_setting(pool, "lock_ip_enabled").await.as_str() {
+        "0" => cfg.ip_enabled = false,
+        "1" => cfg.ip_enabled = true,
+        _ => {}
+    }
+    match get_setting(pool, "lock_account_enabled").await.as_str() {
+        "0" => cfg.acct_enabled = false,
+        "1" => cfg.acct_enabled = true,
+        _ => {}
+    }
+    let num = |v: String, lo: i64, hi: i64| {
+        v.trim()
+            .parse::<i64>()
+            .ok()
+            .filter(|n| (lo..=hi).contains(n))
+    };
+    if let Some(n) = num(get_setting(pool, "lock_account_max").await, 1, 1000) {
+        cfg.acct_max = n;
+    }
+    if let Some(n) = num(get_setting(pool, "lock_ip_max").await, 1, 100_000) {
+        cfg.ip_max = n;
+    }
+    if let Some(n) = num(get_setting(pool, "lock_window_secs").await, 60, 86_400) {
+        cfg.window = n;
+    }
+    if let Some(n) = num(get_setting(pool, "lock_account_secs").await, 60, 43_200) {
+        cfg.acct_secs = n;
+    }
+    if let Some(n) = num(get_setting(pool, "lock_ip_secs").await, 60, 43_200) {
+        cfg.ip_secs = n;
+    }
+    if let Ok(mut cache) = st.lock_cfg.lock() {
+        *cache = Some((std::time::Instant::now(), cfg.clone()));
+    }
+    cfg
+}
+
+/// Canonical form for guard map keys: a dual-stack listener reports
+/// IPv4 sources as ::ffff:a.b.c.d; store and compare them as plain
+/// IPv4 so listings and unlocks use the address admins expect.
+fn normalize_ip_str(ip: &str) -> String {
+    match ip.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V6(v6)) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => ip.to_string(),
+        },
+        _ => ip.to_string(),
+    }
+}
+
+async fn guard_locked(st: &ApiState, user: &str, ip: &str) -> i64 {
+    let ip = normalize_ip_str(ip);
+    let cfg = current_lock_cfg(st).await;
     if let Ok(mut g) = st.guard.lock() {
-        g.locked_remaining(user, ip, now())
+        g.locked_remaining(user, &ip, now(), &cfg)
     } else {
         0
     }
 }
 
-fn guard_fail(st: &ApiState, user: &str, ip: &str, kind: &str) {
+async fn guard_fail(st: &ApiState, user: &str, ip: &str, kind: &str) {
+    let ip = normalize_ip_str(ip);
+    let cfg = current_lock_cfg(st).await;
     if let Ok(mut g) = st.guard.lock() {
-        for hit in g.record_failure(user, ip, now()) {
+        for hit in g.record_failure(user, &ip, now(), &cfg) {
             auth_log(
                 "lockout",
                 kind,
                 user,
-                ip,
+                &ip,
                 &format!(
                     "scope={} key={} level={} lock_secs={}",
                     hit.scope,
@@ -321,6 +516,42 @@ fn guard_success(st: &ApiState, user: &str) {
     if let Ok(mut g) = st.guard.lock() {
         g.record_success(user);
     }
+}
+
+// ------------------------------ operation log ------------------------------
+// Durable record of security-relevant actions (logins, changes,
+// deletions) for the console's 日志管理 page. Best-effort: a failed
+// insert never affects the action being logged.
+
+async fn log_op(st: &ApiState, username: &str, ip: &str, action: &str, detail: &str) {
+    let _ = sqlx::query(
+        "insert into op_log(ts, username, ip, action, detail) values(?, ?, ?, ?, ?)",
+    )
+    .bind(now())
+    .bind(username)
+    .bind(ip)
+    .bind(action)
+    .bind(detail)
+    .execute(&st.pool)
+    .await;
+}
+
+/// Delete op_log rows older than the retention setting (days <= 0
+/// disables cleanup). Runs at startup and on settings save.
+async fn cleanup_op_log(st: &ApiState) {
+    let days: i64 = get_setting(&st.pool, "op_log_retention_days")
+        .await
+        .trim()
+        .parse()
+        .unwrap_or(90);
+    if days <= 0 {
+        return;
+    }
+    let cutoff = now() - days * 86_400;
+    let _ = sqlx::query("delete from op_log where ts < ?")
+        .bind(cutoff)
+        .execute(&st.pool)
+        .await;
 }
 
 struct AuthUser {
@@ -451,6 +682,27 @@ async fn init_db(path: &str) -> Result<SqlitePool, String> {
             }
         }
     }
+    // Avatars: a preset id (see AVATAR_PRESETS) or a data: URL for an
+    // uploaded image; empty for pre-existing rows, which fall back to
+    // a stable per-username preset at read time.
+    for s in ["alter table users add column avatar text not null default ''"] {
+        if let Err(e) = sqlx::query(s).execute(&pool).await {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column name") {
+                return Err(msg);
+            }
+        }
+    }
+    // Operation log (console + client security-relevant actions).
+    for s in [
+        "create table if not exists op_log(id integer primary key autoincrement, ts integer not null, username text not null default '', ip text not null default '', action text not null, detail text not null default '')",
+        "create index if not exists idx_op_log_ts on op_log(ts)",
+    ] {
+        sqlx::query(s)
+            .execute(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     // v46.2: the exact RELAY_SERVERS entry written when the node was
     // added to the rotation list, so removal deletes exactly that
     // spelling. Same duplicate-column tolerance as the migrations
@@ -495,6 +747,41 @@ fn valid_username(u: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
+/// Built-in avatar presets (ids rendered as inline SVG by the
+/// console). New accounts get one at random; users can switch to
+/// another preset or upload their own image.
+const AVATAR_PRESETS: [&str; 12] = [
+    "cat", "fox", "owl", "panda", "robot", "frog", "whale", "rocket", "planet", "mountain",
+    "bolt", "leaf",
+];
+
+fn random_avatar_preset() -> &'static str {
+    let b = sodiumoxide::randombytes::randombytes(1);
+    let idx = b.first().map(|v| (*v as usize) % AVATAR_PRESETS.len()).unwrap_or(0);
+    AVATAR_PRESETS[idx]
+}
+
+/// The avatar to display: the stored value, or — for rows created
+/// before avatars existed — a stable per-username preset.
+fn effective_avatar(stored: &str, username: &str) -> String {
+    if !stored.is_empty() {
+        return stored.to_string();
+    }
+    let h: usize = username.bytes().map(|b| b as usize).sum();
+    AVATAR_PRESETS[h % AVATAR_PRESETS.len()].to_string()
+}
+
+/// Validate a client-supplied avatar value: a preset id, or a
+/// data: image URL (the console downscales uploads to <=128 px,
+/// which keeps them well under this cap).
+fn valid_avatar(v: &str) -> bool {
+    AVATAR_PRESETS.contains(&v)
+        || ((v.starts_with("data:image/png;base64,")
+            || v.starts_with("data:image/jpeg;base64,")
+            || v.starts_with("data:image/webp;base64,"))
+            && v.len() <= 32_768)
+}
+
 async fn create_user(pool: &SqlitePool, username: &str, password: &str) -> Result<(), String> {
     if !valid_username(username) {
         return Err("用户名需为 3-32 位字母、数字、_-.".into());
@@ -510,12 +797,13 @@ async fn create_user(pool: &SqlitePool, username: &str, password: &str) -> Resul
         .map_err(|e| e.to_string())?;
     let hash = bcrypt::hash(password, 10).map_err(|e| e.to_string())?;
     let r = sqlx::query(
-        "insert into users(username, password_hash, is_admin, created_at) values(?, ?, ?, ?)",
+        "insert into users(username, password_hash, is_admin, created_at, avatar) values(?, ?, ?, ?, ?)",
     )
     .bind(username)
     .bind(&hash)
     .bind(if count == 0 { 1 } else { 0 })
     .bind(now())
+    .bind(random_avatar_preset())
     .execute(pool)
     .await;
     match r {
@@ -775,9 +1063,41 @@ async fn oidc_auth(Extension(st): Extension<Arc<ApiState>>, body: String) -> Res
     )
 }
 
-async fn oidc_login_get(Query(q): Query<HashMap<String, String>>) -> Response {
+/// OIDC login codes live 10 minutes: long enough for a human to
+/// type credentials, short enough that a leaked link is useless.
+const OIDC_CODE_TTL_SECS: i64 = 600;
+
+/// (device_id, created_at) of a live OIDC code; an expired code is
+/// deleted and reported as missing.
+async fn oidc_code_row(st: &ApiState, code: &str) -> Option<(String, i64)> {
+    let row = sqlx::query("select device_id, created_at from oidc_codes where code=?")
+        .bind(code)
+        .fetch_optional(&st.pool)
+        .await
+        .ok()?;
+    let row = row?;
+    let created_at: i64 = row.try_get("created_at").ok()?;
+    if now() - created_at > OIDC_CODE_TTL_SECS {
+        let _ = sqlx::query("delete from oidc_codes where code=?")
+            .bind(code)
+            .execute(&st.pool)
+            .await;
+        return None;
+    }
+    let device_id: String = row.try_get("device_id").ok()?;
+    Some((device_id, created_at))
+}
+
+async fn oidc_login_get(
+    Extension(st): Extension<Arc<ApiState>>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
     let code = q.get("code").cloned().unwrap_or_default();
-    Html(api_pages::oidc_login_page(&code, "")).into_response()
+    let device_id = oidc_code_row(&st, &code)
+        .await
+        .map(|(d, _)| d)
+        .unwrap_or_default();
+    Html(api_pages::oidc_login_page(&code, "", &device_id)).into_response()
 }
 
 async fn oidc_login_post(
@@ -786,25 +1106,25 @@ async fn oidc_login_post(
     headers: HeaderMap,
     Form(f): Form<OidcLoginForm>,
 ) -> Response {
-    let exists = sqlx::query("select code from oidc_codes where code=?")
-        .bind(&f.code)
-        .fetch_optional(&st.pool)
-        .await
-        .ok()
-        .flatten()
-        .is_some();
-    if !exists {
-        return Html(api_pages::oidc_login_page(&f.code, "登录链接已失效，请回客户端重试"))
+    let device_id = match oidc_code_row(&st, &f.code).await {
+        Some((d, _)) => d,
+        None => {
+            return Html(api_pages::oidc_login_page(
+                &f.code,
+                "登录链接已失效，请回客户端重试",
+                "",
+            ))
             .into_response();
-    }
+        }
+    };
     // This page is reachable from the client-facing listener (it is the
     // client's account-login path), so it gets the same captcha as the
     // console login — it previously had none (user report 2026-10-31).
     if let Err(e) = verify_captcha(&st, &headers, &f.captcha).await {
-        return Html(api_pages::oidc_login_page(&f.code, &e)).into_response();
+        return Html(api_pages::oidc_login_page(&f.code, &e, &device_id)).into_response();
     }
     let ip = addr.ip().to_string();
-    let remain = guard_locked(&st, &f.username, &ip);
+    let remain = guard_locked(&st, &f.username, &ip).await;
     if remain > 0 {
         auth_log(
             "login-locked",
@@ -816,6 +1136,7 @@ async fn oidc_login_post(
         return Html(api_pages::oidc_login_page(
             &f.code,
             &format!("登录尝试过于频繁，已临时锁定，请约 {} 分钟后再试", (remain + 59) / 60),
+            &device_id,
         ))
         .into_response();
     }
@@ -823,6 +1144,7 @@ async fn oidc_login_post(
         Ok(Some(_)) => {
             guard_success(&st, &f.username);
             auth_log("login-ok", "oidc", &f.username, &ip, "");
+            log_op(&st, &f.username, &ip, "login_ok", "oidc").await;
             let _ = sqlx::query("update oidc_codes set username=? where code=?")
                 .bind(&f.username)
                 .bind(&f.code)
@@ -831,7 +1153,7 @@ async fn oidc_login_post(
             Html(api_pages::oidc_success_page()).into_response()
         }
         Ok(None) => {
-            guard_fail(&st, &f.username, &ip, "oidc");
+            guard_fail(&st, &f.username, &ip, "oidc").await;
             auth_log(
                 "login-fail",
                 "oidc",
@@ -839,11 +1161,13 @@ async fn oidc_login_post(
                 &ip,
                 "reason=bad-credentials",
             );
-            Html(api_pages::oidc_login_page(&f.code, "用户名或密码错误")).into_response()
+            log_op(&st, &f.username, &ip, "login_fail", "oidc").await;
+            Html(api_pages::oidc_login_page(&f.code, "用户名或密码错误", &device_id))
+                .into_response()
         }
         Err(e) => {
             auth_log("login-fail", "oidc", &f.username, &ip, "reason=rejected");
-            Html(api_pages::oidc_login_page(&f.code, &e)).into_response()
+            Html(api_pages::oidc_login_page(&f.code, &e, &device_id)).into_response()
         }
     }
 }
@@ -853,25 +1177,32 @@ async fn auth_query(
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
     let code = q.get("code").cloned().unwrap_or_default();
-    let row = sqlx::query("select device_id, uuid, username from oidc_codes where code=?")
-        .bind(&code)
-        .fetch_optional(&st.pool)
-        .await;
+    // Atomic one-shot consumption: a single DELETE ... RETURNING, so
+    // concurrent polls can never both mint a token for one code. The
+    // TTL predicate makes an expired code unconsumable; the plain
+    // delete afterwards just sweeps it.
+    let cutoff = now() - OIDC_CODE_TTL_SECS;
+    let row = sqlx::query(
+        "delete from oidc_codes where code=? and username is not null and username != '' and created_at > ? returning device_id, uuid, username",
+    )
+    .bind(&code)
+    .bind(cutoff)
+    .fetch_optional(&st.pool)
+    .await;
     let row = match row {
         Ok(Some(r)) => r,
-        _ => return client_err("No authed oidc is found"),
+        _ => {
+            let _ = sqlx::query("delete from oidc_codes where code=? and created_at <= ?")
+                .bind(&code)
+                .bind(cutoff)
+                .execute(&st.pool)
+                .await;
+            return client_err("No authed oidc is found");
+        }
     };
-    let username: Option<String> = row.try_get("username").ok().flatten();
-    let username = match username {
-        Some(u) if !u.is_empty() => u,
-        _ => return client_err("No authed oidc is found"),
-    };
+    let username: String = row.try_get("username").unwrap_or_default();
     let device_id: String = row.try_get("device_id").unwrap_or_default();
     let uuid: String = row.try_get("uuid").unwrap_or_default();
-    let _ = sqlx::query("delete from oidc_codes where code=?")
-        .bind(&code)
-        .execute(&st.pool)
-        .await;
     let user = match load_user(&st.pool, &username).await {
         Some(u) => u,
         None => return client_err("User is disabled"),
@@ -897,7 +1228,7 @@ async fn password_login(
         return client_err("Username or password is empty");
     }
     let ip = addr.ip().to_string();
-    let remain = guard_locked(&st, &username, &ip);
+    let remain = guard_locked(&st, &username, &ip).await;
     if remain > 0 {
         auth_log(
             "login-locked",
@@ -915,6 +1246,7 @@ async fn password_login(
         Ok(Some(user)) => {
             guard_success(&st, &username);
             auth_log("login-ok", "client", &username, &ip, "");
+            log_op(&st, &username, &ip, "login_ok", "client").await;
             let device_id = sfield(&v, "id");
             let uuid = sfield(&v, "uuid");
             match issue_client_token(&st, &username, &device_id, &uuid).await {
@@ -926,7 +1258,7 @@ async fn password_login(
             }
         }
         Ok(None) => {
-            guard_fail(&st, &username, &ip, "client");
+            guard_fail(&st, &username, &ip, "client").await;
             auth_log(
                 "login-fail",
                 "client",
@@ -934,16 +1266,21 @@ async fn password_login(
                 &ip,
                 "reason=bad-credentials",
             );
+            log_op(&st, &username, &ip, "login_fail", "client").await;
             client_err("Username or password is incorrect")
         }
         Err(e) => {
             auth_log("login-fail", "client", &username, &ip, "reason=rejected");
+            log_op(&st, &username, &ip, "login_fail", "client rejected").await;
             client_err(&e)
         }
     }
 }
 
 async fn client_logout(Extension(st): Extension<Arc<ApiState>>, headers: HeaderMap) -> Response {
+    if let Some(name) = resolve_client_user(&st, &headers).await {
+        log_op(&st, &name, "", "logout", "client").await;
+    }
     if let Some(tok) = bearer(&headers) {
         let _ = sqlx::query("delete from client_tokens where token=?")
             .bind(&tok)
@@ -1853,7 +2190,7 @@ async fn web_login(
     let username = sfield(&v, "username");
     let password = sfield(&v, "password");
     let ip = addr.ip().to_string();
-    let remain = guard_locked(&st, &username, &ip);
+    let remain = guard_locked(&st, &username, &ip).await;
     if remain > 0 {
         auth_log(
             "login-locked",
@@ -1871,24 +2208,30 @@ async fn web_login(
         Ok(Some(_)) => {
             guard_success(&st, &username);
             auth_log("login-ok", "web", &username, &ip, "");
+            log_op(&st, &username, &ip, "login_ok", "web").await;
             match new_web_session(&st, &username).await {
                 Ok(token) => session_response(&token, json!({ "ok": true })),
                 Err(e) => err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e),
             }
         }
         Ok(None) => {
-            guard_fail(&st, &username, &ip, "web");
+            guard_fail(&st, &username, &ip, "web").await;
             auth_log("login-fail", "web", &username, &ip, "reason=bad-credentials");
+            log_op(&st, &username, &ip, "login_fail", "web").await;
             err_resp(StatusCode::UNAUTHORIZED, "用户名或密码错误")
         }
         Err(e) => {
             auth_log("login-fail", "web", &username, &ip, "reason=rejected");
+            log_op(&st, &username, &ip, "login_fail", "web rejected").await;
             err_resp(StatusCode::FORBIDDEN, &e)
         }
     }
 }
 
 async fn web_logout(Extension(st): Extension<Arc<ApiState>>, headers: HeaderMap) -> Response {
+    if let Some(u) = resolve_user(&st, &headers).await {
+        log_op(&st, &u.username, "", "logout", "web").await;
+    }
     if let Some(sid) = cookie_val(&headers, "rdp_sid") {
         let _ = sqlx::query("delete from web_sessions where token=?")
             .bind(&sid)
@@ -1907,13 +2250,55 @@ async fn web_logout(Extension(st): Extension<Arc<ApiState>>, headers: HeaderMap)
         .into_response()
 }
 
+async fn stored_avatar(st: &ApiState, username: &str) -> String {
+    let row = sqlx::query("select avatar from users where username=?")
+        .bind(username)
+        .fetch_optional(&st.pool)
+        .await;
+    let stored = match row {
+        Ok(Some(r)) => r.try_get::<String, _>("avatar").unwrap_or_default(),
+        _ => String::new(),
+    };
+    effective_avatar(&stored, username)
+}
+
 async fn me(Extension(st): Extension<Arc<ApiState>>, headers: HeaderMap) -> Response {
     match resolve_user(&st, &headers).await {
-        Some(u) => jresp(
-            StatusCode::OK,
-            json!({ "ok": true, "username": u.username, "is_admin": u.is_admin }),
-        ),
+        Some(u) => {
+            let avatar = stored_avatar(&st, &u.username).await;
+            jresp(
+                StatusCode::OK,
+                json!({ "ok": true, "username": u.username, "is_admin": u.is_admin, "avatar": avatar }),
+            )
+        }
         None => err_resp(StatusCode::UNAUTHORIZED, "未登录"),
+    }
+}
+
+/// Change the caller's own avatar: a preset id or an uploaded
+/// image as a data: URL (validated + length-capped server-side).
+async fn me_avatar(
+    Extension(st): Extension<Arc<ApiState>>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    let u = match resolve_user(&st, &headers).await {
+        Some(u) => u,
+        None => return unauthorized(),
+    };
+    let v = parse_body(&body);
+    let avatar = sfield(&v, "avatar");
+    if !valid_avatar(&avatar) {
+        return err_resp(StatusCode::BAD_REQUEST, "头像无效");
+    }
+    match sqlx::query("update users set avatar=? where username=?")
+        .bind(&avatar)
+        .bind(&u.username)
+        .execute(&st.pool)
+        .await
+    {
+        Ok(_) => jresp(StatusCode::OK, json!({ "ok": true, "avatar": avatar })),
+        Err(e) => err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
@@ -1936,7 +2321,7 @@ async fn change_password(
         None => return unauthorized(),
     };
     let ip = addr.ip().to_string();
-    let remain = guard_locked(&st, &u.username, &ip);
+    let remain = guard_locked(&st, &u.username, &ip).await;
     if remain > 0 {
         auth_log(
             "pwd-change-locked",
@@ -1959,7 +2344,7 @@ async fn change_password(
     match verify_user(&st.pool, &u.username, &old_password).await {
         Ok(Some(_)) => {}
         Ok(None) => {
-            guard_fail(&st, &u.username, &ip, "web");
+            guard_fail(&st, &u.username, &ip, "web").await;
             auth_log(
                 "pwd-change-fail",
                 "web",
@@ -2010,6 +2395,7 @@ async fn change_password(
         &ip,
         &format!("other_sessions_revoked={revoked_n}"),
     );
+    log_op(&st, &u.username, &ip, "change_password", "").await;
     jresp(StatusCode::OK, json!({ "ok": true }))
 }
 
@@ -2083,7 +2469,7 @@ async fn admin_users(Extension(st): Extension<Arc<ApiState>>, headers: HeaderMap
         return forbidden();
     }
     let rows = sqlx::query(
-        "select username, is_admin, disabled, created_at from users order by created_at",
+        "select username, is_admin, disabled, created_at, avatar from users order by created_at",
     )
     .fetch_all(&st.pool)
     .await;
@@ -2094,11 +2480,14 @@ async fn admin_users(Extension(st): Extension<Arc<ApiState>>, headers: HeaderMap
     let users: Vec<Value> = rows
         .iter()
         .map(|r| {
+            let username = r.try_get::<String, _>("username").unwrap_or_default();
+            let stored = r.try_get::<String, _>("avatar").unwrap_or_default();
             json!({
-                "username": r.try_get::<String, _>("username").unwrap_or_default(),
+                "username": username,
                 "is_admin": r.try_get::<i64, _>("is_admin").unwrap_or(0) != 0,
                 "disabled": r.try_get::<i64, _>("disabled").unwrap_or(0) != 0,
                 "created_at": r.try_get::<i64, _>("created_at").unwrap_or(0),
+                "avatar": effective_avatar(&stored, &username),
             })
         })
         .collect();
@@ -2107,6 +2496,7 @@ async fn admin_users(Extension(st): Extension<Arc<ApiState>>, headers: HeaderMap
 
 async fn admin_user_action(
     Extension(st): Extension<Arc<ApiState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Path((name, action)): Path<(String, String)>,
 ) -> Response {
@@ -2170,7 +2560,12 @@ async fn admin_user_action(
         _ => return err_resp(StatusCode::BAD_REQUEST, "未知操作"),
     };
     match r {
-        Ok(res) if res.rows_affected() > 0 => jresp(StatusCode::OK, json!({ "ok": true })),
+        Ok(res) if res.rows_affected() > 0 => {
+            if action == "delete" {
+                log_op(&st, &u.username, &addr.ip().to_string(), "delete_user", &name).await;
+            }
+            jresp(StatusCode::OK, json!({ "ok": true }))
+        }
         Ok(_) => err_resp(StatusCode::NOT_FOUND, "用户不存在"),
         Err(e) => err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -2204,7 +2599,10 @@ async fn admin_user_password(
         .execute(&st.pool)
         .await
     {
-        Ok(res) if res.rows_affected() > 0 => jresp(StatusCode::OK, json!({ "ok": true })),
+        Ok(res) if res.rows_affected() > 0 => {
+            log_op(&st, &u.username, "", "reset_password", &name).await;
+            jresp(StatusCode::OK, json!({ "ok": true }))
+        }
         Ok(_) => err_resp(StatusCode::NOT_FOUND, "用户不存在"),
         Err(e) => err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -2243,6 +2641,7 @@ async fn admin_create_user(
         &addr.ip().to_string(),
         &format!("by={}", u.username),
     );
+    log_op(&st, &u.username, &addr.ip().to_string(), "create_user", &username).await;
     jresp(StatusCode::OK, json!({ "ok": true }))
 }
 
@@ -3051,6 +3450,7 @@ async fn tokens_rename(
 
 async fn tokens_delete(
     Extension(st): Extension<Arc<ApiState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
@@ -3064,7 +3464,17 @@ async fn tokens_delete(
         .execute(&st.pool)
         .await
     {
-        Ok(res) if res.rows_affected() > 0 => jresp(StatusCode::OK, json!({ "ok": true })),
+        Ok(res) if res.rows_affected() > 0 => {
+            log_op(
+                &st,
+                &u.username,
+                &addr.ip().to_string(),
+                "delete_token",
+                &id.to_string(),
+            )
+            .await;
+            jresp(StatusCode::OK, json!({ "ok": true }))
+        }
         Ok(_) => err_resp(StatusCode::NOT_FOUND, "Token 不存在"),
         Err(e) => err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -3091,6 +3501,21 @@ async fn settings_get(Extension(st): Extension<Arc<ApiState>>, headers: HeaderMa
                 "allow_register": get_setting(&st.pool, "allow_register").await != "0",
                 "allow_remote_config": get_setting(&st.pool, "allow_remote_config").await == "1",
                 "must_login": get_setting(&st.pool, "must_login").await == "1",
+                "lock_strategy": ({
+                    let v = get_setting(&st.pool, "lock_strategy").await;
+                    if v == "both" { "both" } else { "ip_first" }
+                }),
+                "lock_ip_enabled": get_setting(&st.pool, "lock_ip_enabled").await != "0",
+                "lock_account_enabled": get_setting(&st.pool, "lock_account_enabled").await != "0",
+                "lock_ip_max": get_setting(&st.pool, "lock_ip_max").await,
+                "lock_account_max": get_setting(&st.pool, "lock_account_max").await,
+                "lock_window_secs": get_setting(&st.pool, "lock_window_secs").await,
+                "lock_ip_secs": get_setting(&st.pool, "lock_ip_secs").await,
+                "lock_account_secs": get_setting(&st.pool, "lock_account_secs").await,
+                "op_log_retention_days": ({
+                    let v = get_setting(&st.pool, "op_log_retention_days").await;
+                    if v.is_empty() { "90".to_string() } else { v }
+                }),
             },
             "template_ready": tpl_ready,
             "template_version": get_setting(&st.pool, "tpl_version").await,
@@ -3101,6 +3526,7 @@ async fn settings_get(Extension(st): Extension<Arc<ApiState>>, headers: HeaderMa
 
 async fn settings_post(
     Extension(st): Extension<Arc<ApiState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: String,
 ) -> Response {
@@ -3183,7 +3609,259 @@ async fn settings_post(
     {
         return err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e);
     }
+    // Login lockout policy (AuthGuard): strategy, per-scope switches
+    // and numbers. Only keys present in the request are touched, so
+    // older consoles saving the classic fields cannot reset them.
+    if let Some(s) = v.get("lock_strategy").and_then(|x| x.as_str()) {
+        let s = if s == "both" { "both" } else { "ip_first" };
+        if let Err(e) = set_setting(&st.pool, "lock_strategy", s).await {
+            return err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e);
+        }
+    }
+    for key in ["lock_ip_enabled", "lock_account_enabled"] {
+        if let Some(b) = v.get(key).and_then(|x| x.as_bool()) {
+            if let Err(e) = set_setting(&st.pool, key, if b { "1" } else { "0" }).await {
+                return err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e);
+            }
+        }
+    }
+    for (key, lo, hi) in [
+        ("lock_ip_max", 1, 100_000),
+        ("lock_account_max", 1, 1000),
+        ("lock_window_secs", 60, 86_400),
+        ("lock_ip_secs", 60, 43_200),
+        ("lock_account_secs", 60, 43_200),
+    ] {
+        if let Some(n) = v.get(key).and_then(|x| x.as_i64()) {
+            if (lo..=hi).contains(&n) {
+                if let Err(e) = set_setting(&st.pool, key, &n.to_string()).await {
+                    return err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e);
+                }
+            }
+        }
+    }
+    if let Some(n) = v.get("op_log_retention_days").and_then(|x| x.as_i64()) {
+        if (0..=3650).contains(&n) {
+            if let Err(e) = set_setting(&st.pool, "op_log_retention_days", &n.to_string()).await {
+                return err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e);
+            }
+        }
+    }
+    // Saved lock settings take effect immediately, not at TTL expiry.
+    if let Ok(mut cache) = st.lock_cfg.lock() {
+        *cache = None;
+    }
+    cleanup_op_log(&st).await;
+    log_op(&st, &u.username, &addr.ip().to_string(), "settings_save", "").await;
     jresp(StatusCode::OK, json!({ "ok": true }))
+}
+
+// ------------------------------ log management ------------------------------
+
+async fn op_log_list(
+    Extension(st): Extension<Arc<ApiState>>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let u = match resolve_user(&st, &headers).await {
+        Some(u) => u,
+        None => return unauthorized(),
+    };
+    if !u.is_admin {
+        return forbidden();
+    }
+    let user_f = q.get("user").cloned().unwrap_or_default();
+    let action_f = q.get("action").cloned().unwrap_or_default();
+    let from: i64 = q.get("from").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let to: i64 = q
+        .get("to")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(i64::MAX);
+    let page: i64 = q
+        .get("page")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1)
+        .max(1);
+    let page_size: i64 = q
+        .get("page_size")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50)
+        .clamp(1, 200);
+    let total: i64 = sqlx::query(
+        "select count(*) as c from op_log where (?='' or username=?) and (?='' or action=?) and ts>=? and ts<=?",
+    )
+    .bind(&user_f)
+    .bind(&user_f)
+    .bind(&action_f)
+    .bind(&action_f)
+    .bind(from)
+    .bind(to)
+    .fetch_one(&st.pool)
+    .await
+    .ok()
+    .and_then(|r| r.try_get("c").ok())
+    .unwrap_or(0);
+    let rows = sqlx::query(
+        "select id, ts, username, ip, action, detail from op_log where (?='' or username=?) and (?='' or action=?) and ts>=? and ts<=? order by id desc limit ? offset ?",
+    )
+    .bind(&user_f)
+    .bind(&user_f)
+    .bind(&action_f)
+    .bind(&action_f)
+    .bind(from)
+    .bind(to)
+    .bind(page_size)
+    .bind((page - 1) * page_size)
+    .fetch_all(&st.pool)
+    .await;
+    let rows = match rows {
+        Ok(r) => r,
+        Err(e) => return err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.try_get::<i64, _>("id").unwrap_or(0),
+                "ts": r.try_get::<i64, _>("ts").unwrap_or(0),
+                "username": r.try_get::<String, _>("username").unwrap_or_default(),
+                "ip": r.try_get::<String, _>("ip").unwrap_or_default(),
+                "action": r.try_get::<String, _>("action").unwrap_or_default(),
+                "detail": r.try_get::<String, _>("detail").unwrap_or_default(),
+            })
+        })
+        .collect();
+    jresp(
+        StatusCode::OK,
+        json!({ "ok": true, "total": total, "page": page, "page_size": page_size, "items": items }),
+    )
+}
+
+async fn op_log_clear(
+    Extension(st): Extension<Arc<ApiState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let u = match resolve_user(&st, &headers).await {
+        Some(u) => u,
+        None => return unauthorized(),
+    };
+    if !u.is_admin {
+        return forbidden();
+    }
+    if let Err(e) = sqlx::query("delete from op_log").execute(&st.pool).await {
+        return err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    }
+    log_op(&st, &u.username, &addr.ip().to_string(), "oplog_clear", "").await;
+    jresp(StatusCode::OK, json!({ "ok": true }))
+}
+
+/// Tail of a server log file (logs/hbbs.log / logs/hbbr.log next to
+/// the executable). The name is a whitelist, never a path, so no
+/// traversal is possible.
+async fn server_log(
+    Extension(st): Extension<Arc<ApiState>>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let u = match resolve_user(&st, &headers).await {
+        Some(u) => u,
+        None => return unauthorized(),
+    };
+    if !u.is_admin {
+        return forbidden();
+    }
+    let name = q.get("name").map(|s| s.as_str()).unwrap_or("hbbs");
+    let file = match name {
+        "hbbs" => "hbbs.log",
+        "hbbr" => "hbbr.log",
+        _ => return err_resp(StatusCode::BAD_REQUEST, "未知日志"),
+    };
+    let lines: usize = q
+        .get("lines")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200)
+        .clamp(1, 1000);
+    let path = st.exe_dir.join("logs").join(file);
+    let content = match tokio::fs::read_to_string(&path).await {
+        Ok(c) => c,
+        Err(_) => String::new(),
+    };
+    let total = content.lines().count();
+    let tail: Vec<&str> = content
+        .lines()
+        .skip(total.saturating_sub(lines))
+        .collect();
+    jresp(
+        StatusCode::OK,
+        json!({ "ok": true, "name": name, "total_lines": total, "content": tail.join("\n") }),
+    )
+}
+
+async fn locks_list(Extension(st): Extension<Arc<ApiState>>, headers: HeaderMap) -> Response {
+    let u = match resolve_user(&st, &headers).await {
+        Some(u) => u,
+        None => return unauthorized(),
+    };
+    if !u.is_admin {
+        return forbidden();
+    }
+    let cfg = current_lock_cfg(&st).await;
+    let t = now();
+    let (ips, accounts) = match st.guard.lock() {
+        Ok(mut g) => (
+            g.locked_ips(t, cfg.window),
+            g.locked_accounts(t, cfg.window),
+        ),
+        Err(_) => (Vec::new(), Vec::new()),
+    };
+    let fmt = |rows: Vec<(String, i64, u32)>| -> Vec<Value> {
+        rows.into_iter()
+            .map(|(key, until, level)| {
+                json!({ "key": key, "locked_until": until, "remain_secs": until - t, "level": level })
+            })
+            .collect()
+    };
+    jresp(
+        StatusCode::OK,
+        json!({ "ok": true, "ips": fmt(ips), "accounts": fmt(accounts) }),
+    )
+}
+
+async fn locks_unlock(
+    Extension(st): Extension<Arc<ApiState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    let u = match resolve_user(&st, &headers).await {
+        Some(u) => u,
+        None => return unauthorized(),
+    };
+    if !u.is_admin {
+        return forbidden();
+    }
+    let v = parse_body(&body);
+    let kind = sfield(&v, "kind");
+    let key = sfield(&v, "key");
+    if (kind != "ip" && kind != "account") || key.is_empty() {
+        return err_resp(StatusCode::BAD_REQUEST, "参数无效");
+    }
+    let removed = match st.guard.lock() {
+        Ok(mut g) => g.unlock(&kind, &key),
+        Err(_) => false,
+    };
+    if removed {
+        log_op(
+            &st,
+            &u.username,
+            &addr.ip().to_string(),
+            "unlock",
+            &format!("{kind}:{key}"),
+        )
+        .await;
+    }
+    jresp(StatusCode::OK, json!({ "ok": true, "removed": removed }))
 }
 
 // ------------------------------ client generation ------------------------------
@@ -4995,14 +5673,17 @@ async fn gen_client(
     let v = parse_body(&body);
     let label = sfield(&v, "label");
     match do_generate(&st, &u.username, &label).await {
-        Ok((filename, token)) => jresp(
-            StatusCode::OK,
-            json!({
-                "ok": true,
-                "filename": filename,
-                "download_url": format!("{}/dl/{token}/{filename}", download_base(&st, &headers).await),
-            }),
-        ),
+        Ok((filename, token)) => {
+            log_op(&st, &u.username, "", "gen_client", &filename).await;
+            jresp(
+                StatusCode::OK,
+                json!({
+                    "ok": true,
+                    "filename": filename,
+                    "download_url": format!("{}/dl/{token}/{filename}", download_base(&st, &headers).await),
+                }),
+            )
+        }
         Err(e) => err_resp(StatusCode::BAD_REQUEST, &e),
     }
 }
@@ -5169,7 +5850,10 @@ async fn gen_delete(
         .execute(&st.pool)
         .await
     {
-        Ok(res) if res.rows_affected() > 0 => jresp(StatusCode::OK, json!({ "ok": true })),
+        Ok(res) if res.rows_affected() > 0 => {
+            log_op(&st, &u.username, "", "delete_gen_client", &id.to_string()).await;
+            jresp(StatusCode::OK, json!({ "ok": true }))
+        }
         Ok(_) => err_resp(StatusCode::NOT_FOUND, "记录不存在"),
         Err(e) => err_resp(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -5303,6 +5987,10 @@ async fn console_home(
 const RELAY_CHALLENGE_TTL_SECS: i64 = 300;
 const RELAY_HEARTBEAT_TS_WINDOW_SECS: i64 = 300;
 const RELAY_HEARTBEAT_REPLAY_TTL_SECS: i64 = 600;
+/// Hard cap on the heartbeat replay map; only signature-verified
+/// heartbeats insert, so reaching this needs ~100k distinct valid
+/// nonces inside one TTL window.
+const RELAY_HEARTBEAT_REPLAY_MAX: usize = 100_000;
 const RELAY_ONLINE_THRESHOLD_SECS: i64 = 90;
 const RELAY_REG_TOKEN_DEFAULT_TTL_HOURS: i64 = 24;
 const RELAY_REG_TOKEN_MAX_TTL_HOURS: i64 = 168;
@@ -6123,10 +6811,31 @@ async fn relay_heartbeat(
             json!({ "ok": false, "error": "时间戳过期，请校准中继机器时间", "revoked": false }),
         );
     }
+    // Verify the signature BEFORE touching the replay map: an
+    // unauthenticated request must not be able to grow the map (the
+    // node id is a small sequential integer, so pre-auth inserts
+    // were a memory/CPU amplification vector).
+    if nonce.len() > 64 {
+        return jresp(
+            StatusCode::OK,
+            json!({ "ok": false, "error": "请求不完整", "revoked": false }),
+        );
+    }
+    let msg = relay_heartbeat_sig_msg(node_id, ts, &nonce, &b_nonce, &b_data);
+    if !relay_hmac_verify(&link_key, &msg, &sig) {
+        return jresp(
+            StatusCode::OK,
+            json!({ "ok": false, "error": "签名校验失败", "revoked": false }),
+        );
+    }
     let replayed = match st.hb_replay.lock() {
         Ok(mut m) => {
             m.retain(|_, seen| t - *seen < RELAY_HEARTBEAT_REPLAY_TTL_SECS);
-            if m.contains_key(&(node_id, nonce.clone())) {
+            if m.len() >= RELAY_HEARTBEAT_REPLAY_MAX {
+                // Still full after pruning: refuse new entries rather
+                // than grow without bound.
+                true
+            } else if m.contains_key(&(node_id, nonce.clone())) {
                 true
             } else {
                 m.insert((node_id, nonce.clone()), t);
@@ -6139,13 +6848,6 @@ async fn relay_heartbeat(
         return jresp(
             StatusCode::OK,
             json!({ "ok": false, "error": "重放请求被拒绝", "revoked": false }),
-        );
-    }
-    let msg = relay_heartbeat_sig_msg(node_id, ts, &nonce, &b_nonce, &b_data);
-    if !relay_hmac_verify(&link_key, &msg, &sig) {
-        return jresp(
-            StatusCode::OK,
-            json!({ "ok": false, "error": "签名校验失败", "revoked": false }),
         );
     }
     let plain = match relay_open(&link_key, &b_nonce, &b_data) {
@@ -6617,9 +7319,10 @@ async fn relays_delete(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
-    if let Err(r) = relay_admin(&st, &headers).await {
-        return r;
-    }
+    let admin = match relay_admin(&st, &headers).await {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
     let row = sqlx::query(
         "select address, last_ip, public_ip, listen_port, config_json, rotation_entry from relay_nodes where id=?",
     )
@@ -6682,6 +7385,7 @@ async fn relays_delete(
                     }
                 }
             }
+            log_op(&st, &admin.username, "", "delete_relay", &id.to_string()).await;
             let mut resp = json!({ "ok": true });
             if let Some(w) = warning {
                 resp["rotation_warning"] = json!(w);
@@ -6820,6 +7524,7 @@ fn build_router_part(state: Arc<ApiState>, part: RouterPart) -> Router {
             .route("/api/auth/logout", post(web_logout))
             .route("/api/auth/change-password", post(change_password))
             .route("/api/me", get(me))
+            .route("/api/me/avatar", patch(me_avatar))
             .route("/api/client-config", get(client_config_view))
             .route("/api/client-downloads", get(client_downloads))
             .route("/api/admin/overview", get(overview))
@@ -6831,6 +7536,10 @@ fn build_router_part(state: Arc<ApiState>, part: RouterPart) -> Router {
             .route("/api/tokens", get(tokens_list).post(tokens_create))
             .route("/api/tokens/:id", delete(tokens_delete).patch(tokens_rename))
             .route("/api/admin/settings", get(settings_get).post(settings_post))
+            .route("/api/admin/op-log", get(op_log_list).delete(op_log_clear))
+            .route("/api/admin/server-log", get(server_log))
+            .route("/api/admin/locks", get(locks_list))
+            .route("/api/admin/locks/unlock", post(locks_unlock))
             .route("/api/admin/template/download", post(template_download))
             .route("/api/admin/template/status", get(template_status))
             .route("/api/admin/update/status", get(update_status))
@@ -7099,10 +7808,12 @@ pub fn run(
             tpl_job: std::sync::Mutex::new(TplJob::default()),
             upd_job: std::sync::Mutex::new(UpdJob::default()),
             guard: std::sync::Mutex::new(AuthGuard::default()),
+            lock_cfg: std::sync::Mutex::new(None),
             dl_cache: std::sync::Mutex::new(None),
             reg_challenges: std::sync::Mutex::new(HashMap::new()),
             hb_replay: std::sync::Mutex::new(HashMap::new()),
         });
+        cleanup_op_log(&state).await;
         let tls = if tls_cert.is_empty() && tls_key.is_empty() {
             None
         } else if tls_cert.is_empty() || tls_key.is_empty() {
@@ -7148,33 +7859,41 @@ pub fn run(
 mod tests {
     use super::*;
 
+    fn both_cfg() -> LockCfg {
+        let mut cfg = LockCfg::from_env();
+        cfg.strategy = LockStrategy::Both;
+        cfg
+    }
+
     #[test]
     fn guard_locks_after_max_failures_and_expires() {
+        let cfg = both_cfg();
         let mut g = AuthGuard::default();
         let t = 10_000;
         for _ in 0..4 {
-            assert!(g.record_failure("admin", "1.2.3.4", t).is_empty());
+            assert!(g.record_failure("admin", "1.2.3.4", t, &cfg).is_empty());
         }
-        assert_eq!(g.locked_remaining("admin", "1.2.3.4", t), 0);
-        let hits = g.record_failure("admin", "1.2.3.4", t);
+        assert_eq!(g.locked_remaining("admin", "1.2.3.4", t, &cfg), 0);
+        let hits = g.record_failure("admin", "1.2.3.4", t, &cfg);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].scope, "account");
         assert_eq!(hits[0].secs, 900);
-        assert_eq!(g.locked_remaining("admin", "1.2.3.4", t), 900);
-        assert_eq!(g.locked_remaining("admin", "1.2.3.4", t + 901), 0);
+        assert_eq!(g.locked_remaining("admin", "1.2.3.4", t, &cfg), 900);
+        assert_eq!(g.locked_remaining("admin", "1.2.3.4", t + 901, &cfg), 0);
     }
 
     #[test]
     fn guard_lock_doubles_on_repeat() {
+        let cfg = both_cfg();
         let mut g = AuthGuard::default();
         let t = 20_000;
         for _ in 0..5 {
-            g.record_failure("admin", "1.2.3.4", t);
+            g.record_failure("admin", "1.2.3.4", t, &cfg);
         }
         let t2 = t + 901; // first lock expired
         let mut hits = Vec::new();
         for _ in 0..5 {
-            hits = g.record_failure("admin", "1.2.3.4", t2);
+            hits = g.record_failure("admin", "1.2.3.4", t2, &cfg);
         }
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].level, 2);
@@ -7183,29 +7902,103 @@ mod tests {
 
     #[test]
     fn guard_success_clears_counter() {
+        let cfg = both_cfg();
         let mut g = AuthGuard::default();
         let t = 30_000;
         for _ in 0..4 {
-            g.record_failure("admin", "1.2.3.4", t);
+            g.record_failure("admin", "1.2.3.4", t, &cfg);
         }
         g.record_success("admin");
         for _ in 0..4 {
-            assert!(g.record_failure("admin", "1.2.3.4", t).is_empty());
+            assert!(g.record_failure("admin", "1.2.3.4", t, &cfg).is_empty());
         }
-        assert_eq!(g.locked_remaining("admin", "1.2.3.4", t), 0);
+        assert_eq!(g.locked_remaining("admin", "1.2.3.4", t, &cfg), 0);
     }
 
     #[test]
     fn guard_ip_lock_covers_other_accounts() {
+        let cfg = both_cfg();
         let mut g = AuthGuard::default();
         let t = 40_000;
         for i in 0..30 {
-            g.record_failure(&format!("user{i}"), "9.9.9.9", t);
+            g.record_failure(&format!("user{i}"), "9.9.9.9", t, &cfg);
         }
         // No single account hit its own limit, but the IP is locked, so
         // even a fresh account with the right password is turned away.
-        assert!(g.locked_remaining("brand-new", "9.9.9.9", t) > 0);
-        assert_eq!(g.locked_remaining("brand-new", "8.8.8.8", t), 0);
+        assert!(g.locked_remaining("brand-new", "9.9.9.9", t, &cfg) > 0);
+        assert_eq!(g.locked_remaining("brand-new", "8.8.8.8", t, &cfg), 0);
+    }
+
+    #[test]
+    fn guard_ip_first_public_source_counts_ip_only() {
+        let cfg = LockCfg::from_env(); // default strategy: IpFirst
+        let mut g = AuthGuard::default();
+        let t = 60_000;
+        // Five failures of one account from a public IP must NOT lock
+        // the account (the IP counter is the one running).
+        for _ in 0..5 {
+            let hits = g.record_failure("admin", "9.9.9.9", t, &cfg);
+            assert!(hits.iter().all(|h| h.scope == "ip"));
+        }
+        assert_eq!(g.locked_remaining("admin", "9.9.9.9", t, &cfg), 0);
+        // 30 failures from the public IP lock the IP itself.
+        for i in 5..30 {
+            g.record_failure(&format!("user{i}"), "9.9.9.9", t, &cfg);
+        }
+        assert!(g.locked_remaining("anyone", "9.9.9.9", t, &cfg) > 0);
+        let locked = g.locked_ips(t, cfg.window);
+        assert_eq!(locked.len(), 1);
+        assert_eq!(locked[0].0, "9.9.9.9");
+        assert!(g.locked_accounts(t, cfg.window).is_empty());
+        // Admin unlock clears it.
+        assert!(g.unlock("ip", "9.9.9.9"));
+        assert_eq!(g.locked_remaining("anyone", "9.9.9.9", t, &cfg), 0);
+    }
+
+    #[test]
+    fn guard_ip_first_private_source_counts_account_only() {
+        let cfg = LockCfg::from_env();
+        let mut g = AuthGuard::default();
+        let t = 70_000;
+        // Behind the home router every WAN user arrives as 10.0.0.1:
+        // failures must feed the account counter, never the shared IP.
+        for _ in 0..5 {
+            g.record_failure("admin", "10.0.0.1", t, &cfg);
+        }
+        assert!(g.locked_remaining("admin", "10.0.0.1", t, &cfg) > 0);
+        assert!(g.locked_ips(t, cfg.window).is_empty());
+        let locked = g.locked_accounts(t, cfg.window);
+        assert_eq!(locked.len(), 1);
+        assert_eq!(locked[0].0, "admin");
+        // Another account from the same router address is unaffected.
+        assert_eq!(g.locked_remaining("alice", "10.0.0.1", t, &cfg), 0);
+    }
+
+    #[test]
+    fn guard_ip_first_v4_mapped_source_judged_as_ipv4() {
+        let cfg = LockCfg::from_env();
+        // Dual-stack listeners report v4 sources as ::ffff:a.b.c.d:
+        // a mapped private address must feed the account counter, a
+        // mapped public one the IP counter.
+        assert_eq!(cfg.scopes("::ffff:10.0.0.1"), (true, false));
+        assert_eq!(cfg.scopes("::ffff:127.0.0.1"), (true, false));
+        assert_eq!(cfg.scopes("::ffff:8.8.8.8"), (false, true));
+        assert_eq!(normalize_ip_str("::ffff:10.0.0.1"), "10.0.0.1");
+        assert_eq!(normalize_ip_str("2001:db8::1"), "2001:db8::1");
+    }
+
+    #[test]
+    fn guard_scope_switches_disable_counters() {
+        let mut cfg = LockCfg::from_env();
+        cfg.acct_enabled = false;
+        let mut g = AuthGuard::default();
+        let t = 80_000;
+        for _ in 0..10 {
+            assert!(g
+                .record_failure("admin", "10.0.0.1", t, &cfg)
+                .is_empty());
+        }
+        assert_eq!(g.locked_remaining("admin", "10.0.0.1", t, &cfg), 0);
     }
 
     #[test]
@@ -7498,8 +8291,8 @@ mod tests {
         assert_eq!(parse_pro_tag("v"), None);
         assert_eq!(parse_pro_tag(""), None);
         assert_eq!(parse_pro_tag("v32 "), Some((32, 0)));
-        assert_eq!(current_pro_num(), 46);
-        assert_eq!(current_pro_version(), (46, 0));
+        assert_eq!(current_pro_num(), 47);
+        assert_eq!(current_pro_version(), (47, 0));
     }
 
     #[test]
@@ -8395,6 +9188,7 @@ mod tests {
             tpl_job: std::sync::Mutex::new(TplJob::default()),
             upd_job: std::sync::Mutex::new(UpdJob::default()),
             guard: std::sync::Mutex::new(AuthGuard::default()),
+            lock_cfg: std::sync::Mutex::new(None),
             dl_cache: std::sync::Mutex::new(None),
             reg_challenges: std::sync::Mutex::new(HashMap::new()),
             hb_replay: std::sync::Mutex::new(HashMap::new()),
