@@ -12,20 +12,41 @@
 // on their exact text.
 
 pub const CSS: &str = r#"
-*{box-sizing:border-box}body{margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:#0f1419;color:#e6edf3}
-a{color:#58a6ff}.wrap{max-width:1080px;margin:0 auto;padding:24px 16px}
-.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin-bottom:16px}
+/* Theme tokens (modern-web-guidance light-dark guide): three modes
+   on <html data-theme>: light / dark / system (system follows the
+   OS via prefers-color-scheme). The attribute is set before first
+   paint by the inline script page() puts in <head>; the console
+   topbar switches it and persists the choice in localStorage. */
+html[data-theme="light"]{--bg:#f6f8fa;--surface:#ffffff;--border:#d0d7de;--text:#1f2328;--muted:#59636e;--inset:#eff1f3;--accent:#0969da;--accent-hover:#0757ba;--link:#0969da;--err:#d1242f;--ok:#1a7f37;--danger:#cf222e;--danger-hover:#a40e26;--hover:#eaeef2;--thead:#f6f8fa;--badge-bg:#0969da22;color-scheme:light}
+html[data-theme="dark"]{--bg:#0f1419;--surface:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--inset:#0d1117;--accent:#1f6feb;--accent-hover:#2270d4;--link:#58a6ff;--err:#f85149;--ok:#3fb950;--danger:#b62324;--danger-hover:#8e1b1c;--hover:#21262d;--thead:#1c2128;--badge-bg:#1f6feb33;color-scheme:dark}
+html[data-theme="system"]{--bg:#f6f8fa;--surface:#ffffff;--border:#d0d7de;--text:#1f2328;--muted:#59636e;--inset:#eff1f3;--accent:#0969da;--accent-hover:#0757ba;--link:#0969da;--err:#d1242f;--ok:#1a7f37;--danger:#cf222e;--danger-hover:#a40e26;--hover:#eaeef2;--thead:#f6f8fa;--badge-bg:#0969da22;color-scheme:light}
+@media (prefers-color-scheme: dark){html[data-theme="system"]{--bg:#0f1419;--surface:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--inset:#0d1117;--accent:#1f6feb;--accent-hover:#2270d4;--link:#58a6ff;--err:#f85149;--ok:#3fb950;--danger:#b62324;--danger-hover:#8e1b1c;--hover:#21262d;--thead:#1c2128;--badge-bg:#1f6feb33;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:var(--bg);color:var(--text)}
+.avatar{border-radius:50%;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;overflow:hidden;vertical-align:middle}
+.avatar svg{width:100%;height:100%;display:block}
+.avatar img{width:100%;height:100%;object-fit:cover;display:block}
+#who-av{cursor:pointer;border:0;background:transparent;padding:0}
+.av-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:12px 0}
+.av-opt{cursor:pointer;border:2px solid transparent;border-radius:50%;padding:0;background:transparent}
+.av-opt:hover{background:transparent}
+.av-opt.sel{border-color:var(--accent)}
+pre.logview{background:var(--inset);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;line-height:1.55;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:0}
+#toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:99;background:var(--surface);color:var(--err);border:1px solid var(--err);border-radius:8px;padding:8px 18px;font-size:14px;display:none;box-shadow:0 4px 18px rgba(0,0,0,.25)}
+#menu-btn{display:none}
+.sb-overlay{display:none}
+a{color:var(--link)}.wrap{max-width:1080px;margin:0 auto;padding:24px 16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:16px}
 h1{font-size:20px;margin:0 0 16px}h2{font-size:16px;margin:0 0 12px}
-input,select{width:100%;padding:9px 10px;margin:6px 0 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3}
-button{background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:9px 16px;cursor:pointer;font-size:14px;line-height:20px;white-space:nowrap;flex-shrink:0}
-button:hover{background:#2270d4}button.danger{background:#b62324}button.danger:hover{background:#8e1b1c}button.ghost{background:#21262d;border:1px solid #30363d}
-table{width:100%;border-collapse:separate;border-spacing:0;font-size:14px}td,th{padding:8px;border-bottom:1px solid #21262d;text-align:left;vertical-align:top}
-.err{color:#f85149;min-height:20px}.ok{color:#3fb950}.muted{color:#8b949e;font-size:13px}
+input,select{width:100%;padding:9px 10px;margin:6px 0 12px;background:var(--inset);border:1px solid var(--border);border-radius:6px;color:var(--text)}
+button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:9px 16px;cursor:pointer;font-size:14px;line-height:20px;white-space:nowrap;flex-shrink:0}
+button:hover{background:var(--accent-hover)}button.danger{background:var(--danger)}button.danger:hover{background:var(--danger-hover)}button.ghost{background:var(--hover);border:1px solid var(--border);color:var(--text)}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:14px}td,th{padding:8px;border-bottom:1px solid var(--hover);text-align:left;vertical-align:top}
+.err{color:var(--err);min-height:20px}.ok{color:var(--ok)}.muted{color:var(--muted);font-size:13px}
 .center{max-width:380px;margin:12vh auto}
 .row{display:flex;gap:16px;flex-wrap:wrap}.row .card{flex:1;min-width:240px}
 .stat{font-size:28px;font-weight:600}
 nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-nav button{background:#21262d;border:1px solid #30363d}nav button.active{background:#1f6feb;border-color:#1f6feb}
+nav button{background:var(--hover);border:1px solid var(--border)}nav button.active{background:var(--accent);border-color:var(--accent)}
 section{display:none}section.active{display:block}
 .dl{display:flex;gap:8px;align-items:center}.dl input{margin:0;min-width:0;flex:1}
 table.gent{table-layout:fixed}
@@ -46,63 +67,63 @@ td.nowrap{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .table-wrapper{overflow:auto;max-inline-size:100%;max-block-size:min(500px,80vh);container-type:inline-size}
 .table-wrapper table{table-layout:fixed}
 thead{position:sticky;inset-block-start:0;z-index:1}
-thead th{position:sticky;inset-block-start:0;background:#1c2128}
-tbody th{position:sticky;inset-inline-start:0;background:#161b22}
+thead th{position:sticky;inset-block-start:0;background:var(--thead)}
+tbody th{position:sticky;inset-inline-start:0;background:var(--surface)}
 td.trunc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* v44: click/tap a truncated cell to expand it in place. The table
    layout is fixed, so the column width does not move; the text only
    wraps within its own column and the row grows taller. */
 td.trunc.expanded{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
 td.trunc[tabindex]{cursor:pointer}
-td.trunc:focus-visible{outline:2px solid #1f6feb;outline-offset:-2px}
+td.trunc:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .table-wrapper table.kv td{overflow-wrap:anywhere}
 @container (width < 600px){
 .table-wrapper table{min-width:0!important}
 .table-wrapper table,.table-wrapper thead,.table-wrapper tbody,.table-wrapper tr,.table-wrapper th,.table-wrapper td{display:block}
 .table-wrapper thead{display:none}
-.table-wrapper tr{margin-block-end:1.5rem;border:1px solid #30363d}
-.table-wrapper tbody th{position:sticky;inset-block-start:0;z-index:2;background:#1c2128}
+.table-wrapper tr{margin-block-end:1.5rem;border:1px solid var(--border)}
+.table-wrapper tbody th{position:sticky;inset-block-start:0;z-index:2;background:var(--thead)}
 .table-wrapper td.trunc,.table-wrapper td.nowrap{white-space:normal;overflow:visible;text-overflow:clip}
-.table-wrapper td:nth-child(1)::before{content:var(--label-1) ": ";font-weight:600;color:#8b949e}
-.table-wrapper td:nth-child(2)::before{content:var(--label-2) ": ";font-weight:600;color:#8b949e}
-.table-wrapper td:nth-child(3)::before{content:var(--label-3) ": ";font-weight:600;color:#8b949e}
-.table-wrapper td:nth-child(4)::before{content:var(--label-4) ": ";font-weight:600;color:#8b949e}
-.table-wrapper td:nth-child(5)::before{content:var(--label-5) ": ";font-weight:600;color:#8b949e}
-.table-wrapper td:nth-child(6)::before{content:var(--label-6) ": ";font-weight:600;color:#8b949e}
-.table-wrapper td:nth-child(7)::before{content:var(--label-7) ": ";font-weight:600;color:#8b949e}
-.table-wrapper td:nth-child(8)::before{content:var(--label-8) ": ";font-weight:600;color:#8b949e}
+.table-wrapper td:nth-child(1)::before{content:var(--label-1) ": ";font-weight:600;color:var(--muted)}
+.table-wrapper td:nth-child(2)::before{content:var(--label-2) ": ";font-weight:600;color:var(--muted)}
+.table-wrapper td:nth-child(3)::before{content:var(--label-3) ": ";font-weight:600;color:var(--muted)}
+.table-wrapper td:nth-child(4)::before{content:var(--label-4) ": ";font-weight:600;color:var(--muted)}
+.table-wrapper td:nth-child(5)::before{content:var(--label-5) ": ";font-weight:600;color:var(--muted)}
+.table-wrapper td:nth-child(6)::before{content:var(--label-6) ": ";font-weight:600;color:var(--muted)}
+.table-wrapper td:nth-child(7)::before{content:var(--label-7) ": ";font-weight:600;color:var(--muted)}
+.table-wrapper td:nth-child(8)::before{content:var(--label-8) ": ";font-weight:600;color:var(--muted)}
 }
-code{background:#0d1117;padding:2px 6px;border-radius:4px;font-size:13px}
-.cap{display:flex;gap:8px;align-items:center}.cap img{height:54px;border:1px solid #30363d;border-radius:6px;background:#e8ecf1;display:block}.cap input{margin:0}
+code{background:var(--inset);padding:2px 6px;border-radius:4px;font-size:13px}
+.cap{display:flex;gap:8px;align-items:center}.cap img{height:54px;border:1px solid var(--border);border-radius:6px;background:#e8ecf1;display:block}.cap input{margin:0}
 .capbtn{background:transparent;border:0;padding:0;cursor:pointer}.capbtn:hover{background:transparent}
 .capq{font-size:18px;font-weight:600;white-space:nowrap}
-.linkbtn{background:none;border:0;color:#58a6ff;padding:0;font-size:13px;cursor:pointer;text-decoration:underline}.linkbtn:hover{background:none}
-.changelog{white-space:pre-wrap;word-break:break-word;max-height:280px;overflow-y:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;font-size:13px;line-height:1.6}
+.linkbtn{background:none;border:0;color:var(--link);padding:0;font-size:13px;cursor:pointer;text-decoration:underline}.linkbtn:hover{background:none}
+.changelog{white-space:pre-wrap;word-break:break-word;max-height:280px;overflow-y:auto;background:var(--inset);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:13px;line-height:1.6}
 .langrow{display:flex;gap:6px;justify-content:flex-end;margin-bottom:12px}
-button.langbtn.active{background:#1f6feb;border-color:#1f6feb}
-.badge{display:inline-block;background:#1f6feb33;border:1px solid #1f6feb;color:#58a6ff;border-radius:4px;padding:1px 6px;font-size:12px;margin-left:6px;white-space:nowrap}
-footer{border-top:1px solid #30363d;margin-top:8px;padding:16px 0 8px}
+button.langbtn.active{background:var(--accent);border-color:var(--accent)}
+.badge{display:inline-block;background:var(--badge-bg);border:1px solid var(--accent);color:var(--link);border-radius:4px;padding:1px 6px;font-size:12px;margin-left:6px;white-space:nowrap}
+footer{border-top:1px solid var(--border);margin-top:8px;padding:16px 0 8px}
 footer h2{font-size:14px}
 /* v46: sidebar layout (modern-web-guidance navigation-drawer guide,
    sidebar variant: the same element is a persistent sidebar on wide
    screens and an icon rail on narrower ones; responsive-design guide:
    dynamic viewport units for the full-height sidebar). */
 .layout{display:flex;min-height:100vh}
-.sidebar{width:216px;flex-shrink:0;position:sticky;top:0;height:100vh;height:100dvh;display:flex;flex-direction:column;background:#161b22;border-inline-end:1px solid #30363d}
+.sidebar{width:216px;flex-shrink:0;position:sticky;top:0;height:100vh;height:100dvh;display:flex;flex-direction:column;background:var(--surface);border-inline-end:1px solid var(--border)}
 .sb-brand{display:flex;align-items:center;gap:10px;padding:16px 16px 12px}
-.sb-mark{flex-shrink:0;width:28px;height:28px;border-radius:6px;background:#1f6feb;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px}
+.sb-mark{flex-shrink:0;width:28px;height:28px;border-radius:6px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px}
 .sb-brand h1{font-size:16px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sidebar nav{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;padding:4px 8px;margin:0}
-.nav-group-label{padding:10px 10px 4px;font-size:12px;color:#8b949e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sidebar nav button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:6px;padding:9px 10px}
-.sidebar nav button:hover{background:#21262d}
-.sidebar nav button.active{background:#1f6feb;border-color:#1f6feb}
-.sidebar nav button.active:hover{background:#2270d4}
+.nav-group-label{padding:10px 10px 4px;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar nav button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:6px;padding:9px 10px;color:var(--text)}
+.sidebar nav button:hover{background:var(--hover)}
+.sidebar nav button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.sidebar nav button.active:hover{background:var(--accent-hover)}
 .nav-ic{flex-shrink:0;width:16px;height:16px}
 .nav-ic svg{width:16px;height:16px;display:block}
 .nav-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sb-collapse{margin:8px;border:1px solid #30363d;background:#21262d;border-radius:6px;padding:8px;cursor:pointer;color:#e6edf3}
-.sb-collapse:hover{background:#30363d}
+.sb-collapse{margin:8px;border:1px solid var(--border);background:var(--hover);border-radius:6px;padding:8px;cursor:pointer;color:var(--text)}
+.sb-collapse:hover{background:var(--border)}
 .sidebar.collapsed{width:60px}
 .sidebar.collapsed .sb-brand h1,.sidebar.collapsed .nav-label,.sidebar.collapsed .nav-group-label{display:none}
 .sidebar.collapsed .sb-brand{justify-content:center;padding:16px 0 12px}
@@ -123,6 +144,16 @@ footer h2{font-size:14px}
 }
 @media (max-width:599px){
 #who{display:none}
+/* Phone: the sidebar becomes a drawer (navigation-drawer guide):
+   off-canvas until the topbar menu button opens it, with a scrim. */
+.sidebar{position:fixed;inset-inline-start:0;top:0;z-index:40;width:216px;transform:translateX(-105%);transition:transform .2s ease}
+.sidebar .sb-brand h1,.sidebar .nav-label,.sidebar .nav-group-label{display:block}
+.sidebar .sb-brand{justify-content:flex-start;padding:16px 16px 12px}
+.sidebar nav button{justify-content:flex-start;padding:9px 10px}
+.sidebar.open{transform:none;box-shadow:0 0 40px rgba(0,0,0,.45)}
+.sb-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:39}
+.sb-overlay.show{display:block}
+#menu-btn{display:inline-flex}
 }
 "#;
 
@@ -149,7 +180,7 @@ const I18N={zh:{
 'auth.no_account':'没有账号？','auth.first_admin':'（首个注册用户自动成为管理员）',
 'auth.has_account':'已有账号？','auth.network_err':'网络错误，请检查连接后重试',
 'auth.login_page_title':'登录 - RustDesk 服务控制台','auth.register_page_title':'注册 - RustDesk 服务控制台',
-'auth.oidc_title':'登录 RustDesk','auth.oidc_desc':'使用你的账号登录，登录后请返回 RustDesk 客户端。',
+'auth.oidc_title':'登录 RustDesk','auth.oidc_desc':'使用你的账号登录，登录后请返回 RustDesk 客户端。','auth.oidc_device':'设备',
 'auth.oidc_ok_title':'登录成功','auth.oidc_ok_desc':'请返回 RustDesk 客户端，登录状态会自动完成。可以关闭此页面。',
 'pwd.title':'修改密码','pwd.old':'旧密码','pwd.new':'新密码','pwd.confirm':'确认新密码',
 'pwd.old_ph':'当前使用的密码','pwd.new_ph':'新密码（至少 6 位）','pwd.confirm_ph':'再次输入新密码',
@@ -159,6 +190,13 @@ const I18N={zh:{
 'nav.genclient':'生成客户端','nav.settings':'服务器设置',
 'nav.g_devices':'设备与审计','nav.g_manage':'管理与工具','nav.collapse':'收起侧边栏',
 'nav.expand':'展开侧边栏','nav.label':'主导航',
+'nav.relays':'中继节点','nav.logs':'日志管理',
+'theme.light':'浅色','theme.dark':'深色','theme.system':'跟随系统',
+'av.title':'更换头像','av.upload':'上传图片','av.bad_image':'图片读取失败',
+'log.op_title':'操作日志','log.user_ph':'账号','log.all_actions':'全部动作','log.clear':'清空','log.clear_confirm':'清空全部操作日志？删除不可恢复。','log.empty':'暂无记录','log.time':'时间','log.ip':'来源 IP','log.action':'动作','log.detail':'详情','log.srv_title':'服务端日志','log.srv_pick':'选择要查看的日志文件',
+'log.act.login_ok':'登录成功','log.act.login_fail':'登录失败','log.act.logout':'退出','log.act.change_password':'修改密码','log.act.reset_password':'重置密码','log.act.create_user':'新建用户','log.act.delete_user':'删除用户','log.act.settings_save':'修改设置','log.act.gen_client':'生成客户端','log.act.delete_gen_client':'删除生成记录','log.act.delete_token':'删除 API key','log.act.delete_relay':'删除中继节点','log.act.unlock':'解除锁定','log.act.oplog_clear':'清空操作日志',
+'lock.title':'被锁定 IP 与账号','lock.empty':'当前没有被锁定的 IP 或账号','lock.kind':'类型','lock.kind_ip':'IP','lock.kind_account':'账号','lock.key':'IP / 账号','lock.until':'到期时间','lock.level':'锁定级别','lock.unlock':'解除锁定','lock.admin_only':'权限不足！',
+'lset.title':'登录锁定','lset.strategy':'锁定策略','lset.ip_first':'优先锁 IP（公网来源计 IP，内网来源计账号）','lset.both':'IP 与账号都计','lset.ip_en':'启用 IP 锁定','lset.ip_max':'IP 失败次数上限','lset.ip_secs':'IP 锁定时长（秒）','lset.acct_en':'启用账号锁定','lset.acct_max':'账号失败次数上限','lset.acct_secs':'账号锁定基础时长（秒，连续触发翻倍）','lset.window':'失败计数窗口（秒）','lset.retention':'操作日志保留天数（0 = 不自动清理）',
 'ov.users':'注册用户','ov.devices':'已绑定设备','ov.peers':'已注册终端（hbbs）',
 'ov.about':'说明','ov.about_text':'客户端在「设置 → 网络」填入本服务器地址，或直接使用「生成客户端」里预绑定配置的安装包，即可配合账号登录使用。设备在客户端登录账号后会通过心跳自动绑定到所属用户。',
 'ov.load_fail':'概览加载失败，请刷新重试','ov.load_fail2':'概览加载失败：',
@@ -314,7 +352,7 @@ const I18N={zh:{
 'auth.no_account':'No account? ','auth.first_admin':' (the first registered user becomes admin)',
 'auth.has_account':'Already have an account? ','auth.network_err':'Network error. Check your connection and retry.',
 'auth.login_page_title':'Sign in - RustDesk Server Console','auth.register_page_title':'Register - RustDesk Server Console',
-'auth.oidc_title':'Sign in to RustDesk','auth.oidc_desc':'Sign in with your account, then return to the RustDesk client.',
+'auth.oidc_title':'Sign in to RustDesk','auth.oidc_desc':'Sign in with your account, then return to the RustDesk client.','auth.oidc_device':'Device',
 'auth.oidc_ok_title':'Signed in','auth.oidc_ok_desc':'Return to the RustDesk client; the sign-in will complete automatically. You can close this page.',
 'pwd.title':'Change Password','pwd.old':'Current password','pwd.new':'New password','pwd.confirm':'Confirm new password',
 'pwd.old_ph':'Your current password','pwd.new_ph':'New password (at least 6 characters)','pwd.confirm_ph':'Enter the new password again',
@@ -324,6 +362,13 @@ const I18N={zh:{
 'nav.genclient':'Generate Client','nav.settings':'Server Settings',
 'nav.g_devices':'Devices & Audit','nav.g_manage':'Admin & Tools','nav.collapse':'Collapse sidebar',
 'nav.expand':'Expand sidebar','nav.label':'Main navigation',
+'nav.relays':'Relay Nodes','nav.logs':'Log Management',
+'theme.light':'Light','theme.dark':'Dark','theme.system':'System',
+'av.title':'Change Avatar','av.upload':'Upload Image','av.bad_image':'Could not read the image',
+'log.op_title':'Operation Log','log.user_ph':'Account','log.all_actions':'All actions','log.clear':'Clear','log.clear_confirm':'Clear the whole operation log? This cannot be undone.','log.empty':'No records','log.time':'Time','log.ip':'Source IP','log.action':'Action','log.detail':'Detail','log.srv_title':'Server Logs','log.srv_pick':'Pick a log file to view',
+'log.act.login_ok':'Login OK','log.act.login_fail':'Login failed','log.act.logout':'Logout','log.act.change_password':'Change password','log.act.reset_password':'Reset password','log.act.create_user':'Create user','log.act.delete_user':'Delete user','log.act.settings_save':'Save settings','log.act.gen_client':'Generate client','log.act.delete_gen_client':'Delete generated client','log.act.delete_token':'Delete API key','log.act.delete_relay':'Delete relay node','log.act.unlock':'Unlock','log.act.oplog_clear':'Clear operation log',
+'lock.title':'Locked IPs & Accounts','lock.empty':'No IPs or accounts are locked','lock.kind':'Type','lock.kind_ip':'IP','lock.kind_account':'Account','lock.key':'IP / Account','lock.until':'Locked Until','lock.level':'Level','lock.unlock':'Unlock','lock.admin_only':'Insufficient permissions!',
+'lset.title':'Login Lockout','lset.strategy':'Lockout strategy','lset.ip_first':'IP first (public sources count toward IP, private toward account)','lset.both':'Count both IP and account','lset.ip_en':'Enable IP lockout','lset.ip_max':'IP failure limit','lset.ip_secs':'IP lock duration (seconds)','lset.acct_en':'Enable account lockout','lset.acct_max':'Account failure limit','lset.acct_secs':'Account base lock duration (seconds, doubles on repeat)','lset.window':'Failure counting window (seconds)','lset.retention':'Operation log retention days (0 = never auto-clean)',
 'ov.users':'Registered users','ov.devices':'Bound devices','ov.peers':'Registered endpoints (hbbs)',
 'ov.about':'About','ov.about_text':'In the client, fill in this server address under Settings → Network, or use a pre-configured installer from Generate Client, then sign in with an account. Devices are bound to their owner automatically via heartbeat after signing in.',
 'ov.load_fail':'Failed to load the overview. Refresh and retry.','ov.load_fail2':'Failed to load the overview: ',
@@ -482,7 +527,7 @@ document.addEventListener('DOMContentLoaded',applyI18n);
 
 fn page(title: &str, body: &str) -> String {
     format!(
-        "<!doctype html><html lang=\"zh\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><link rel=\"icon\" type=\"image/png\" href=\"/favicon.ico\"><title>{title}</title><style>{CSS}</style></head><body>{I18N_JS}{body}</body></html>"
+        "<!doctype html><html lang=\"zh\" data-theme=\"system\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><link rel=\"icon\" type=\"image/png\" href=\"/favicon.ico\"><title>{title}</title><script>try{{document.documentElement.dataset.theme=localStorage.getItem('rdp-theme')||'system';}}catch(e){{}}</script><style>{CSS}</style></head><body>{I18N_JS}{body}</body></html>"
     )
 }
 
@@ -572,16 +617,25 @@ fn esc_html(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-pub fn oidc_login_page(code: &str, err: &str) -> String {
+pub fn oidc_login_page(code: &str, err: &str, device_id: &str) -> String {
     let code = esc_html(code);
     let err_html = if err.is_empty() {
         String::new()
     } else {
         format!("<div class=\"err\">{}</div>", esc_html(err))
     };
+    let device_html = if device_id.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<p class=\"muted\"><span data-i18n=\"auth.oidc_device\">设备</span> ID：{}</p>",
+            esc_html(device_id)
+        )
+    };
     let mut body = format!(
         r#"<div class="center"><div class="langrow"><button type="button" class="langbtn ghost" data-lang="zh">中文</button><button type="button" class="langbtn ghost" data-lang="en">English</button></div><div class="card"><h1 data-i18n="auth.oidc_title">登录 RustDesk</h1>
 <p class="muted" data-i18n="auth.oidc_desc">使用你的账号登录，登录后请返回 RustDesk 客户端。</p>
+{device_html}
 {err_html}
 <form method="post" action="/oidc/login">
 <input type="hidden" name="code" value="{code}">
@@ -2164,6 +2218,7 @@ var qrcode = function() {
 }();
 </script>
 <div class="layout">
+<div class="sb-overlay" id="sb-overlay"></div>
 <aside class="sidebar" id="sidebar">
 <div class="sb-brand"><span class="sb-mark" aria-hidden="true">R</span><h1 data-i18n="app.title">RustDesk 服务控制台</h1></div>
 <nav aria-label="主导航" data-i18n-aria="nav.label">
@@ -2172,19 +2227,30 @@ var qrcode = function() {
 <button data-s="devices" title="设备" data-i18n-title="nav.devices"><span class="nav-ic" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="9" rx="1"/><path d="M6 14h4M8 11v3"/></svg></span><span class="nav-label" data-i18n="nav.devices">设备</span></button>
 <button data-s="audit" title="审计日志" data-i18n-title="nav.audit"><span class="nav-ic" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="2" width="9" height="12" rx="1"/><path d="M6 5.5h4M6 8.5h4M6 11.5h2.5"/></svg></span><span class="nav-label" data-i18n="nav.audit">审计日志</span></button>
 <div class="nav-group-label" data-i18n="nav.g_manage">管理与工具</div>
-<button data-s="users" class="adminonly" title="用户管理" data-i18n-title="nav.users"><span class="nav-ic" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="5" r="2.6"/><path d="M2.8 14c.5-2.9 2.6-4.5 5.2-4.5S12.7 11.1 13.2 14"/></svg></span><span class="nav-label" data-i18n="nav.users">用户管理</span></button>
-<button data-s="tokens" title="API key" data-i18n-title="nav.tokens"><span class="nav-ic" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="8" r="3"/><path d="M8.5 8H14M11.5 8v2.5M14 8v1.8"/></svg></span><span class="nav-label" data-i18n="nav.tokens">API key</span></button>
 <button data-s="genclient" title="生成客户端" data-i18n-title="nav.genclient"><span class="nav-ic" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8.5M4.5 7.5 8 11l3.5-3.5M3 13.5h10"/></svg></span><span class="nav-label" data-i18n="nav.genclient">生成客户端</span></button>
+<button data-s="users" class="adminonly" title="用户管理" data-i18n-title="nav.users"><span class="nav-ic" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="5" r="2.6"/><path d="M2.8 14c.5-2.9 2.6-4.5 5.2-4.5S12.7 11.1 13.2 14"/></svg></span><span class="nav-label" data-i18n="nav.users">用户管理</span></button>
+<button data-s="relays" class="adminonly" title="中继节点" data-i18n-title="nav.relays"><span class="nav-ic" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="1.8"/><circle cx="8" cy="2.4" r="1.3"/><circle cx="13.2" cy="11.2" r="1.3"/><circle cx="2.8" cy="11.2" r="1.3"/><path d="M8 3.7v2.5M9.6 9.1l2.3 1.2M6.4 9.1l-2.3 1.2"/></svg></span><span class="nav-label" data-i18n="nav.relays">中继节点</span></button>
+<button data-s="logs" class="adminonly" title="日志管理" data-i18n-title="nav.logs"><span class="nav-ic" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5v11M7.5 2.5v11M11 2.5v11M13.8 5.5 11 4.8M2.2 10.5 5 11.2"/></svg></span><span class="nav-label" data-i18n="nav.logs">日志管理</span></button>
 <button data-s="settings" class="adminonly" title="服务器设置" data-i18n-title="nav.settings"><span class="nav-ic" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.5"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2M4.2 4.2l1.4 1.4M10.4 10.4l1.4 1.4M11.8 4.2l-1.4 1.4M5.6 10.4l-1.4 1.4"/></svg></span><span class="nav-label" data-i18n="nav.settings">服务器设置</span></button>
+<button data-s="tokens" title="API key" data-i18n-title="nav.tokens"><span class="nav-ic" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="8" r="3"/><path d="M8.5 8H14M11.5 8v2.5M14 8v1.8"/></svg></span><span class="nav-label" data-i18n="nav.tokens">API key</span></button>
 </nav>
 <button type="button" class="sb-collapse" id="sb-collapse" aria-label="收起侧边栏" aria-expanded="true">«</button>
 </aside>
 <div class="main">
 <div class="wrap">
 <div class="topbar">
+<button class="ghost" id="menu-btn" aria-label="菜单"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
 <span class="topbar-title" id="topbar-title">概览</span>
-<span id="who" class="muted"></span><button class="langbtn ghost" data-lang="zh">中文</button><button class="langbtn ghost" data-lang="en">English</button><button class="ghost" id="pwdchg" data-i18n="pwd.title">修改密码</button><button class="ghost" id="logout" data-i18n="app.logout">退出</button>
+<button id="who-av" title="头像" data-i18n-title="av.title"></button><span id="who" class="muted"></span><select id="theme-sel" style="width:auto;margin:0" aria-label="主题"><option value="light" data-i18n="theme.light">浅色</option><option value="dark" data-i18n="theme.dark">深色</option><option value="system" data-i18n="theme.system">跟随系统</option></select><button class="langbtn ghost" data-lang="zh">中文</button><button class="langbtn ghost" data-lang="en">English</button><button class="ghost" id="pwdchg" data-i18n="pwd.title">修改密码</button><button class="ghost" id="logout" data-i18n="app.logout">退出</button>
 </div>
+<div id="toast" role="status"></div>
+<dialog id="av-dialog" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);max-width:420px;width:92vw;padding:20px">
+<h2 data-i18n="av.title" style="margin-top:0">更换头像</h2>
+<div class="av-grid" id="av-grid"></div>
+<label data-i18n="av.upload">上传图片</label><input type="file" id="av-file" accept="image/*">
+<div class="err" id="av-err"></div>
+<p style="display:flex;gap:8px;justify-content:flex-end;margin:12px 0 0"><button class="ghost" id="av-close" data-i18n="app.close">关闭</button></p>
+</dialog>
 <div class="card" id="pwd-card" style="display:none"><h2 data-i18n="pwd.title">修改密码</h2>
 <div class="err" id="pwd-err"></div><div class="ok" id="pwd-ok"></div>
 <label data-i18n="pwd.old">旧密码</label><input id="pwd-old" type="password" placeholder="当前使用的密码" data-i18n-ph="pwd.old_ph">
@@ -2207,6 +2273,9 @@ var qrcode = function() {
 <div class="card"><h2 data-i18n="dev.title">设备</h2>
 <p class="muted"><button class="ghost" id="dev-refresh" data-i18n="dev.refresh">刷新</button> <span id="dev-updated"></span></p>
 <div id="dev-list" data-i18n="app.loading">加载中…</div></div>
+</section>
+
+<section id="s-relays">
 <div class="card adminonly" id="relay-card"><h2 data-i18n="relay.title">中继节点</h2>
 <p class="muted" data-i18n="relay.desc">中继节点由常驻代理（relay-agent）管理：代理注册后每 20 秒心跳上报状态，控制台下发的配置随心跳响应加密回传。注册只建立管理关系，不会自动把节点加入中继轮询列表；在节点详情页可手动加入或移除轮询。</p>
 <div class="err" id="relay-err"></div>
@@ -2218,6 +2287,18 @@ var qrcode = function() {
 <h2 style="margin-top:20px" data-i18n="relay.links_title">待使用的注册链接</h2>
 <div id="relay-links" data-i18n="app.loading">加载中…</div></div>
 <div class="card" id="relay-detail-card" style="display:none"><div id="relay-detail"></div></div>
+</section>
+
+<section id="s-logs">
+<div class="card"><h2 data-i18n="log.op_title">操作日志</h2>
+<p><input id="log-user" placeholder="账号" data-i18n-ph="log.user_ph" style="width:160px"> <select id="log-action" style="width:150px"><option value="" data-i18n="log.all_actions">全部动作</option></select> <label for="log-from" data-i18n="aud.from">起始日期</label> <input id="log-from" type="date" style="width:150px"> <label for="log-to" data-i18n="aud.to">结束日期</label> <input id="log-to" type="date" style="width:150px"> <button id="log-search" data-i18n="aud.search">搜索</button> <button class="ghost" id="log-refresh" data-i18n="aud.refresh">刷新</button> <button class="danger" id="log-clear" data-i18n="log.clear">清空</button></p>
+<div id="log-list" data-i18n="app.loading">加载中…</div>
+<p id="log-pager" style="margin-top:12px"></p></div>
+<div class="card" id="locks-card"><h2 data-i18n="lock.title">被锁定 IP 与账号</h2>
+<div id="locks-list" data-i18n="app.loading">加载中…</div></div>
+<div class="card"><h2 data-i18n="log.srv_title">服务端日志</h2>
+<p><button class="ghost" data-srvlog="hbbs">hbbs.log</button> <button class="ghost" data-srvlog="hbbr">hbbr.log</button> <select id="srvlog-lines" style="width:110px"><option value="100">100 行</option><option value="200" selected>200 行</option><option value="500">500 行</option><option value="1000">1000 行</option></select></p>
+<pre class="logview" id="srvlog-view" data-i18n="log.srv_pick">选择要查看的日志文件</pre></div>
 </section>
 
 <section id="s-audit">
@@ -2283,20 +2364,31 @@ var qrcode = function() {
 <p class="muted" data-i18n="set.allowrc_note">开启后，控制端可以操作被控端的 RustDesk 客户端界面与设置（包括改密码、改配置），不用再逐台到被控端本地勾选。仅在自有设备上开启；已在本机手动改过这一项的客户端以本机设置为准。</p>
 <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="set-mustlogin" style="width:auto;margin:0"> <span data-i18n="set.mustlogin">必须登录（所有客户端必须登录后才能连接）</span></label>
 <p class="muted" data-i18n="set.mustlogin_note">开启后，未登录的客户端（没有账号登录或登录已失效）无法发起任何连接，包括直连与中继；纯 ID+Key（无账号）部署请勿开启。</p>
+<h2 style="margin-top:20px" data-i18n="lset.title">登录锁定</h2>
+<label data-i18n="lset.strategy">锁定策略</label>
+<select id="set-lock-strategy"><option value="ip_first" data-i18n="lset.ip_first">优先锁 IP（公网来源计 IP，内网来源计账号）</option><option value="both" data-i18n="lset.both">IP 与账号都计</option></select>
+<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="set-lock-ip-en" style="width:auto;margin:0"> <span data-i18n="lset.ip_en">启用 IP 锁定</span></label>
+<label data-i18n="lset.ip_max">IP 失败次数上限</label><input id="set-lock-ip-max" type="number" min="1" max="100000">
+<label data-i18n="lset.ip_secs">IP 锁定时长（秒）</label><input id="set-lock-ip-secs" type="number" min="60" max="43200">
+<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="set-lock-acct-en" style="width:auto;margin:0"> <span data-i18n="lset.acct_en">启用账号锁定</span></label>
+<label data-i18n="lset.acct_max">账号失败次数上限</label><input id="set-lock-acct-max" type="number" min="1" max="1000">
+<label data-i18n="lset.acct_secs">账号锁定基础时长（秒，连续触发翻倍）</label><input id="set-lock-acct-secs" type="number" min="60" max="43200">
+<label data-i18n="lset.window">失败计数窗口（秒）</label><input id="set-lock-window" type="number" min="60" max="86400">
+<label data-i18n="lset.retention">操作日志保留天数（0 = 不自动清理）</label><input id="set-oplog-ret" type="number" min="0" max="3650">
 <button id="set-save" data-i18n="set.save">保存设置</button></div>
 <div class="card"><h2 data-i18n="set.ports_title">监听端口（当前生效值）</h2>
 <p class="muted" id="ports-line" data-i18n="set.ports_loading">读取中…</p>
 <p class="muted" data-i18n="set.ports_desc">端口由启动参数决定，不在这里改：编辑程序目录下的 server.env（没有就从 server.env.example 复制一份），改 HBBS_PORT / HBBR_PORT / API_PORT / RELAY_SERVERS 后重启服务端。改端口后必须重新生成客户端（新客户端才会带新端口），并更新路由器端口转发；已生成的旧客户端会连不上新端口。换端口只能躲开针对默认端口的批量扫描，真正的安全仍靠服务器密钥与账号登录——知道新端口的人仍可注册 ID。</p></div>
 <div class="card"><h2 data-i18n="set.svc_title">系统服务（Ubuntu）</h2>
 <p class="muted" data-i18n="set.svc_desc">在程序目录执行下面命令，把服务端注册为 systemd 服务：开机自启、崩溃自动重启。服务跑的就是 start.sh，所以 server.env 里的端口与中继配置同样生效；升级时只需替换 hbbs / hbbr 两个文件，不用重装服务。</p>
-<div style="font-family:monospace;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px">sudo ./install-service.sh<br>sudo ./uninstall-service.sh&nbsp;&nbsp;<span data-i18n="set.svc_remove"># 移除服务</span><br>systemctl status rustdesk-server-pro<br>journalctl -u rustdesk-server-pro -f&nbsp;&nbsp;<span data-i18n="set.svc_logs"># 看服务日志</span></div></div>
+<div style="font-family:monospace;background:var(--inset);border:1px solid var(--border);border-radius:6px;padding:10px">sudo ./install-service.sh<br>sudo ./uninstall-service.sh&nbsp;&nbsp;<span data-i18n="set.svc_remove"># 移除服务</span><br>systemctl status rustdesk-server-pro<br>journalctl -u rustdesk-server-pro -f&nbsp;&nbsp;<span data-i18n="set.svc_logs"># 看服务日志</span></div></div>
 <div class="card"><h2 data-i18n="set.tpl_title">官方客户端模板</h2>
 <p class="muted" id="tpl-status" data-i18n="set.tpl_checking">检查中…</p>
 <label data-i18n="set.tpl_ver_label">版本（可空 = 最新版）</label><input id="tpl-ver" placeholder="如 1.4.2" data-i18n-ph="set.tpl_ver_ph">
 <button id="tpl-btn" data-i18n="set.tpl_btn">下载/更新模板</button>
 <div id="tpl-prog" style="display:none;margin-top:12px">
-<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;height:14px;overflow:hidden">
-<div id="tpl-bar" style="height:100%;width:0%;background:#1f6feb;transition:width .5s"></div>
+<div style="background:var(--inset);border:1px solid var(--border);border-radius:6px;height:14px;overflow:hidden">
+<div id="tpl-bar" style="height:100%;width:0%;background:var(--accent);transition:width .5s"></div>
 </div>
 <p class="muted" id="tpl-detail"></p>
 </div>
@@ -2392,6 +2484,7 @@ async function init(){
   try{ ME=await api('/api/me'); }catch(e){ if(e.message!=='unauth')$('who').textContent=t('app.load_fail_refresh'); return; }
   if(!ME.ok){location.href='/console/login';return;}
   $('who').textContent=ME.username+(ME.is_admin?t('app.who_admin'):'');
+  renderWhoAvatar();
   if(!ME.is_admin){document.querySelectorAll('.adminonly').forEach(e=>e.style.display='none');}
   loadOverview(); loadDevices();
   window.addEventListener('hashchange',routeFromHash);
@@ -2403,24 +2496,31 @@ window.__onLangChange=()=>{
   const s=active?active.dataset.s:'overview';
   setTopTitle(s);applySbCollapsed();
   if(s==='overview')loadOverview(); if(s==='devices')loadDevices();
+  if(s==='relays')loadDevices();
+  if(s==='logs'){loadOpLog(LOG_PAGE);loadLocks();}
   if(s==='audit')loadAudit(AUDIT_PAGE);
   if(s==='users')loadUsers(); if(s==='tokens')loadTokens();
   if(s==='genclient'){loadGen();loadCfg();loadDl();} if(s==='settings')loadSettings();
   if(RELAY_DETAIL_ID)showRelay(RELAY_DETAIL_ID);
+  renderWhoAvatar();
 };
 // v38: hash routing — the console section lives in the URL (#/devices,
 // #/devices/relay-3), so a refresh or browser back/forward restores the
 // same view instead of always landing on overview.
-const SECTIONS=['overview','devices','audit','users','tokens','genclient','settings'];
+const SECTIONS=['overview','devices','audit','users','tokens','genclient','settings','relays','logs'];
 function sectionAllowed(s){
   if(SECTIONS.indexOf(s)<0)return false;
-  if(s==='users'||s==='settings')return !!(ME&&ME.is_admin);
+  if(s==='users'||s==='settings'||s==='relays'||s==='logs')return !!(ME&&ME.is_admin);
   return true;
 }
 function parseHash(){
   const m=(location.hash||'').match(/^#\/([a-z]+)(?:\/relay-(\d+))?$/);
   if(!m||!sectionAllowed(m[1]))return {s:'overview',relay:null};
-  return {s:m[1],relay:(m[1]==='devices'&&m[2])?parseInt(m[2],10):null};
+  // Relay detail moved to its own page in the console refresh; the
+  // pre-refresh deep link #/devices/relay-N keeps working and is
+  // canonicalized to #/relays/relay-N by routeFromHash.
+  if(m[1]==='devices'&&m[2])return {s:'relays',relay:parseInt(m[2],10)};
+  return {s:m[1],relay:(m[1]==='relays'&&m[2])?parseInt(m[2],10):null};
 }
 function showSection(s,relay){
   setTopTitle(s);
@@ -2429,18 +2529,21 @@ function showSection(s,relay){
   if(btn)btn.classList.add('active');
   document.querySelectorAll('section').forEach(x=>x.classList.remove('active'));
   $('s-'+s).classList.add('active');
+  if(s!=='relays')closeRelayDetail();
   if(s==='overview')loadOverview();
-  if(s==='devices'){
-    if(relay){ loadDevices().then(()=>{ const r=parseHash(); if(r.s==='devices'&&r.relay===relay&&RELAY_DETAIL_ID!==relay)showRelay(relay); }); }
+  if(s==='devices')loadDevices();
+  if(s==='relays'){
+    if(relay){ loadDevices().then(()=>{ const r=parseHash(); if(r.s==='relays'&&r.relay===relay&&RELAY_DETAIL_ID!==relay)showRelay(relay); }); }
     else{ closeRelayDetail(); loadDevices(); }
-  }else closeRelayDetail();
+  }
+  if(s==='logs'){ loadOpLog(LOG_PAGE); loadLocks(); }
   if(s==='audit')loadAudit(AUDIT_PAGE);
   if(s==='users')loadUsers(); if(s==='tokens')loadTokens();
   if(s==='genclient'){loadGen();loadCfg();loadDl();} if(s==='settings')loadSettings();
 }
 function routeFromHash(){
   const r=parseHash();
-  const want=r.relay?'#/devices/relay-'+r.relay:'#/'+r.s;
+  const want=r.relay?'#/relays/relay-'+r.relay:'#/'+r.s;
   if(location.hash&&location.hash!==want)history.replaceState(null,'',want);
   showSection(r.s,r.relay);
 }
@@ -2495,6 +2598,150 @@ $('pwd-cancel').onclick=()=>{
   $('pwd-err').textContent='';$('pwd-ok').textContent='';
   $('pwd-card').style.display='none';
 };
+
+// ---- small top toast (brief hints, no modal popups) ----
+let toastTimer=null;
+function showToast(msg){
+  const el=$('toast');
+  el.textContent=msg;
+  el.style.display='block';
+  if(toastTimer)clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{el.style.display='none';},2500);
+}
+
+// ---- theme (light / dark / system, persisted in localStorage) ----
+const themeSel=$('theme-sel');
+try{themeSel.value=localStorage.getItem('rdp-theme')||'system';}catch(e){themeSel.value='system';}
+themeSel.onchange=()=>{
+  document.documentElement.dataset.theme=themeSel.value;
+  try{localStorage.setItem('rdp-theme',themeSel.value);}catch(e){}
+};
+
+// ---- mobile drawer ----
+const sbOverlay=$('sb-overlay');
+function closeDrawer(){SB.classList.remove('open');sbOverlay.classList.remove('show');}
+$('menu-btn').onclick=()=>{SB.classList.add('open');sbOverlay.classList.add('show');};
+sbOverlay.onclick=closeDrawer;
+document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',closeDrawer));
+
+// ---- avatars ----
+// Preset ids mirror the server-side AVATAR_PRESETS list; each preset
+// is a small inline SVG (background + simple glyph), rendered at any
+// size. Uploaded avatars are data: URLs and render as <img>.
+const AV_PRESETS={
+cat:{bg:'#f59e0b',fg:'#fff7ed',d:'M20 30c-6 0-10-5-10-11 0-2 1-4 2-5C11 10 15 7 20 7s9 3 11 7c1 1 2 3 2 5 0 6-4 11-10 11zM16 17h.1M24 17h.1M20 21c1 1 2 1 3 0'},
+fox:{bg:'#ea580c',fg:'#fff7ed',d:'M8 8l8 5h8l8-5-2 12c-1 6-5 10-10 10S11 26 10 20L8 8zM16 20h.1M24 20h.1'},
+owl:{bg:'#0ea5e9',fg:'#f0f9ff',d:'M20 6c7 0 12 5 12 13 0 8-5 13-12 13S8 27 8 19C8 11 13 6 20 6zM15 18h.1M25 18h.1M20 22v3'},
+panda:{bg:'#334155',fg:'#f8fafc',d:'M12 10a4 4 0 1 1 3-6M28 10a4 4 0 1 0-3-6M20 8c7 0 11 5 11 12s-4 12-11 12S9 27 9 20s4-12 11-12zM15 19h.1M25 19h.1M20 24h.1'},
+robot:{bg:'#6366f1',fg:'#eef2ff',d:'M20 4v5M14 9h12a6 6 0 0 1 6 6v8a6 6 0 0 1-6 6H14a6 6 0 0 1-6-6v-8a6 6 0 0 1 6-6zM16 18h.1M24 18h.1M16 24h8'},
+frog:{bg:'#22c55e',fg:'#f0fdf4',d:'M13 12a5 5 0 1 1 2-8M27 12a5 5 0 1 0-2-8M20 10c7 0 12 4 12 10s-5 10-12 10S8 26 8 20s5-10 12-10zM15 20h.1M25 20h.1'},
+whale:{bg:'#0284c7',fg:'#f0f9ff',d:'M6 22c0-6 6-11 13-11 4 0 7 1 9 3l6-3-1 6c3 2 5 5 5 8 0 7-6 12-14 12S6 29 6 22zM14 19h.1'},
+rocket:{bg:'#7c3aed',fg:'#f5f3ff',d:'M20 4c4 3 6 8 6 14l-6 6-6-6c0-6 2-11 6-14zM20 12a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM14 24l-4 4M26 24l4 4'},
+planet:{bg:'#0891b2',fg:'#ecfeff',d:'M20 10a8 8 0 1 1 0 16 8 8 0 0 1 0-16zM5 26c8 3 22 3 30-2M8 15c6-3 18-3 24 1'},
+mountain:{bg:'#0d9488',fg:'#f0fdfa',d:'M4 30L16 12l5 7 4-5 11 16H4zM16 12l2 3'},
+bolt:{bg:'#eab308',fg:'#fefce8',d:'M22 4L8 22h8l-2 8L28 14h-8l2-10z'},
+leaf:{bg:'#65a30d',fg:'#f7fee7',d:'M32 8C20 8 10 14 9 26c0 2 0 4 1 6 1-2 2-4 4-5C18 30 30 22 32 8zM12 28C16 20 22 14 28 11'}};
+function avatarHtml(v,size){
+  size=size||32;
+  if(v&&v.indexOf('data:')===0)return '<span class="avatar" style="width:'+size+'px;height:'+size+'px"><img src="'+v+'" alt=""></span>';
+  const p=AV_PRESETS[v]||AV_PRESETS.cat;
+  return '<span class="avatar" style="width:'+size+'px;height:'+size+'px"><svg viewBox="0 0 40 40"><rect width="40" height="40" fill="'+p.bg+'"/><path d="'+p.d+'" fill="none" stroke="'+p.fg+'" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
+}
+function renderWhoAvatar(){ if(ME)$('who-av').innerHTML=avatarHtml(ME.avatar,30); }
+$('who-av').onclick=()=>{
+  $('av-err').textContent='';
+  $('av-grid').innerHTML=Object.keys(AV_PRESETS).map(k=>'<button type="button" class="av-opt'+(ME&&ME.avatar===k?' sel':'')+'" data-av="'+k+'" title="'+k+'">'+avatarHtml(k,44)+'</button>').join('');
+  document.querySelectorAll('.av-opt').forEach(b=>b.onclick=()=>saveAvatar(b.dataset.av));
+  $('av-dialog').showModal();
+};
+$('av-close').onclick=()=>$('av-dialog').close();
+async function saveAvatar(v){
+  $('av-err').textContent='';
+  try{
+    const j=await api('/api/me/avatar',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({avatar:v})});
+    if(j.ok){ME.avatar=j.avatar;renderWhoAvatar();$('av-dialog').close();}
+    else $('av-err').textContent=j.error||t('app.failed');
+  }catch(e){ if(e.message!=='unauth')$('av-err').textContent=t('app.network_err'); }
+}
+$('av-file').onchange=()=>{
+  const f=$('av-file').files[0]; if(!f)return;
+  const img=new Image();
+  img.onload=()=>{
+    const c=document.createElement('canvas');
+    const s=Math.min(1,128/Math.max(img.width,img.height));
+    c.width=Math.max(1,Math.round(img.width*s)); c.height=Math.max(1,Math.round(img.height*s));
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    URL.revokeObjectURL(img.src);
+    saveAvatar(c.toDataURL('image/png'));
+  };
+  img.onerror=()=>{$('av-err').textContent=t('av.bad_image');};
+  img.src=URL.createObjectURL(f);
+};
+
+// ---- log management ----
+let LOG_PAGE=1;
+const OP_ACTIONS=['login_ok','login_fail','logout','change_password','reset_password','create_user','delete_user','settings_save','gen_client','delete_gen_client','delete_token','delete_relay','unlock','oplog_clear'];
+(function(){
+  const sel=$('log-action');
+  OP_ACTIONS.forEach(a=>{const o=document.createElement('option');o.value=a;o.textContent='';o.dataset.i18n='log.act.'+a;sel.appendChild(o);});
+})();
+function logRange(){
+  let from=0,to=0;
+  const f=$('log-from').value, tv=$('log-to').value;
+  if(f)from=Math.floor(new Date(f+'T00:00:00').getTime()/1000);
+  if(tv)to=Math.floor(new Date(tv+'T23:59:59').getTime()/1000);
+  return {from:from,to:to};
+}
+async function loadOpLog(page){
+  LOG_PAGE=page||1;
+  const r=logRange();
+  const qs=new URLSearchParams({page:LOG_PAGE,page_size:50,user:$('log-user').value.trim(),action:$('log-action').value});
+  if(r.from)qs.set('from',r.from); if(r.to)qs.set('to',r.to);
+  let j; try{ j=await api('/api/admin/op-log?'+qs.toString()); }catch(e){ if(e.message!=='unauth')loadFail($('log-list'),'loadOpLog'); return; }
+  if(!j.ok){ loadFail($('log-list'),'loadOpLog',j.error); return; }
+  if(!j.items.length){ $('log-list').innerHTML='<p class="muted">'+t('log.empty')+'</p>'; }
+  else{
+    $('log-list').innerHTML=tableOpen(t('log.op_title'),[t('log.time'),t('usr.username'),t('log.ip'),t('log.action'),t('log.detail')],760,'','<colgroup><col style="width:18%"><col style="width:13%"><col style="width:14%"><col style="width:12%"><col style="width:43%"></colgroup>')+
+    j.items.map(x=>'<tr><td class="trunc" title="'+esc(new Date(x.ts*1000).toLocaleString())+'">'+new Date(x.ts*1000).toLocaleString()+'</td><td class="trunc" title="'+esc(x.username)+'">'+esc(x.username)+'</td><td class="trunc" title="'+esc(x.ip||'-')+'">'+esc(x.ip||'-')+'</td><td>'+esc(t('log.act.'+x.action)===('log.act.'+x.action)?x.action:t('log.act.'+x.action))+'</td><td class="trunc" title="'+esc(x.detail||'')+'">'+esc(x.detail||'')+'</td></tr>').join('')+TABLE_CLOSE;
+  }
+  const pages=Math.max(1,Math.ceil(j.total/50));
+  $('log-pager').innerHTML=(LOG_PAGE>1?'<button class="ghost" onclick="loadOpLog('+(LOG_PAGE-1)+')">'+t('aud.prev')+'</button> ':'')+'<span class="muted">'+LOG_PAGE+' / '+pages+' · '+j.total+'</span>'+(LOG_PAGE<pages?' <button class="ghost" onclick="loadOpLog('+(LOG_PAGE+1)+')">'+t('aud.next')+'</button>':'');
+}
+$('log-search').onclick=()=>loadOpLog(1);
+$('log-refresh').onclick=()=>loadOpLog(LOG_PAGE);
+$('log-clear').onclick=async()=>{
+  if(!ME||!ME.is_admin){showToast(t('lock.admin_only'));return;}
+  if(!confirm(t('log.clear_confirm')))return;
+  const j=await api('/api/admin/op-log',{method:'DELETE'});
+  if(j.ok)loadOpLog(1); else alert(j.error||t('app.op_failed'));
+};
+document.querySelectorAll('[data-srvlog]').forEach(b=>b.onclick=async()=>{
+  const lines=$('srvlog-lines').value;
+  const view=$('srvlog-view');
+  view.textContent=t('app.loading');
+  try{
+    const j=await api('/api/admin/server-log?name='+b.dataset.srvlog+'&lines='+lines);
+    view.textContent=j.ok?(j.content||t('log.empty')):(j.error||t('app.failed'));
+  }catch(e){ if(e.message!=='unauth')view.textContent=t('app.network_err'); }
+});
+async function loadLocks(){
+  if(!ME||!ME.is_admin){$('locks-card').style.display='none';return;}
+  let j; try{ j=await api('/api/admin/locks'); }catch(e){ if(e.message!=='unauth')loadFail($('locks-list'),'loadLocks'); return; }
+  if(!j.ok){ loadFail($('locks-list'),'loadLocks',j.error); return; }
+  const rows=[];
+  (j.ips||[]).forEach(x=>rows.push({kind:'ip',key:x.key,until:x.locked_until,level:x.level}));
+  (j.accounts||[]).forEach(x=>rows.push({kind:'account',key:x.key,until:x.locked_until,level:x.level}));
+  if(!rows.length){ $('locks-list').innerHTML='<p class="muted">'+t('lock.empty')+'</p>'; return; }
+  window.__LOCKS=rows;
+  $('locks-list').innerHTML=tableOpen(t('lock.title'),[t('lock.kind'),t('lock.key'),t('lock.until'),t('lock.level'),t('usr.actions')],680,'','<colgroup><col style="width:12%"><col style="width:30%"><col style="width:24%"><col style="width:10%"><col style="width:24%"></colgroup>')+
+  rows.map((x,i)=>'<tr><td>'+(x.kind==='ip'?t('lock.kind_ip'):t('lock.kind_account'))+'</td><td class="trunc" title="'+esc(x.key)+'">'+esc(x.key)+'</td><td class="trunc" title="'+esc(new Date(x.until*1000).toLocaleString())+'">'+new Date(x.until*1000).toLocaleString()+'</td><td>'+x.level+'</td><td><button class="ghost" onclick="unlockLock('+i+')">'+t('lock.unlock')+'</button></td></tr>').join('')+TABLE_CLOSE;
+}
+async function unlockLock(i){
+  if(!ME||!ME.is_admin){showToast(t('lock.admin_only'));return;}
+  const x=window.__LOCKS[i]; if(!x)return;
+  const j=await api('/api/admin/locks/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:x.kind,key:x.key})});
+  if(j.ok)loadLocks(); else alert(j.error||t('app.op_failed'));
+}
 
 async function loadOverview(){
   if(!ME.is_admin)return;
@@ -2607,11 +2854,11 @@ let RELAY_DETAIL_ID=null;
 let RELAY_DETAIL_NAME='';
 async function showRelay(id){
   let j; try{ j=await api('/api/admin/relays/'+id); }catch(e){ if(e.message!=='unauth')alert(t('relay.load_fail')); return; }
-  if(!j.ok){ alert(j.error||t('relay.load_fail')); if(location.hash==='#/devices/relay-'+id)location.hash='#/devices'; return; }
+  if(!j.ok){ alert(j.error||t('relay.load_fail')); if(location.hash==='#/relays/relay-'+id)location.hash='#/relays'; return; }
   const active=document.querySelector('nav button.active');
-  if(!active||active.dataset.s!=='devices')return;
+  if(!active||active.dataset.s!=='relays')return;
   RELAY_DETAIL_ID=id;
-  const h='#/devices/relay-'+id;
+  const h='#/relays/relay-'+id;
   if(location.hash!==h)location.hash=h;
   RELAY_DETAIL_NAME=j.node.name||'';
   const n=j.node, cfg=n.config||{};
@@ -2648,7 +2895,7 @@ async function showRelay(id){
   $('relay-detail-card').scrollIntoView({behavior:'smooth'});
 }
 function closeRelayDetail(){ RELAY_DETAIL_ID=null; RELAY_DETAIL_NAME=''; $('relay-detail-card').style.display='none'; }
-function backRelay(){ closeRelayDetail(); if(location.hash!== '#/devices')location.hash='#/devices'; }
+function backRelay(){ closeRelayDetail(); if(location.hash!== '#/relays')location.hash='#/relays'; }
 async function relayPushCfg(id){
   const btn=$('rcfg-push'); if(btn.disabled)return; btn.disabled=true;
   const num=v=>{const s=String(v).trim(); if(!s)return null; const n=parseFloat(s); return isNaN(n)?null:n;};
@@ -2678,7 +2925,7 @@ async function loadUsers(){
   if(!j.ok){ loadFail($('user-list'),'loadUsers',j.error); return; }
   USERS=j.users;
   $('user-list').innerHTML=tableOpen(t('usr.title'),[t('usr.username'),t('usr.role'),t('usr.status'),t('usr.created'),t('usr.actions')],720,'','<colgroup><col style="width:18%"><col style="width:10%"><col style="width:10%"><col style="width:20%"><col style="width:42%"></colgroup>')+
-    j.users.map((u,i)=>`<tr><td class="trunc" title="${esc(u.username)}">${esc(u.username)}</td><td>${u.is_admin?t('usr.admin'):t('usr.regular')}</td><td>${u.disabled?t('usr.disabled'):t('usr.active')}</td><td class="trunc" title="${esc(new Date(u.created_at*1000).toLocaleString())}">${new Date(u.created_at*1000).toLocaleString()}</td>
+    j.users.map((u,i)=>`<tr><td class="trunc" title="${esc(u.username)}">${avatarHtml(u.avatar,26)} ${esc(u.username)}</td><td>${u.is_admin?t('usr.admin'):t('usr.regular')}</td><td>${u.disabled?t('usr.disabled'):t('usr.active')}</td><td class="trunc" title="${esc(new Date(u.created_at*1000).toLocaleString())}">${new Date(u.created_at*1000).toLocaleString()}</td>
     <td><button class="ghost" onclick="uact(USERS[${i}].username,'${u.disabled?'enable':'disable'}')">${u.disabled?t('usr.enable'):t('usr.disable')}</button>
     <button class="ghost" onclick="uact(USERS[${i}].username,'${u.is_admin?'unadmin':'admin'}')">${u.is_admin?t('usr.unadmin'):t('usr.make_admin')}</button>
     <button class="ghost" onclick="upwd(USERS[${i}].username)">${t('usr.reset_pwd')}</button>
@@ -2812,6 +3059,15 @@ async function loadSettings(){
   $('set-allowreg').checked=j.settings.allow_register!==false;
   $('set-allowrc').checked=!!j.settings.allow_remote_config;
   $('set-mustlogin').checked=!!j.settings.must_login;
+  $('set-lock-strategy').value=j.settings.lock_strategy||'ip_first';
+  $('set-lock-ip-en').checked=j.settings.lock_ip_enabled!==false;
+  $('set-lock-acct-en').checked=j.settings.lock_account_enabled!==false;
+  $('set-lock-ip-max').value=j.settings.lock_ip_max||'';
+  $('set-lock-acct-max').value=j.settings.lock_account_max||'';
+  $('set-lock-window').value=j.settings.lock_window_secs||'';
+  $('set-lock-ip-secs').value=j.settings.lock_ip_secs||'';
+  $('set-lock-acct-secs').value=j.settings.lock_account_secs||'';
+  $('set-oplog-ret').value=j.settings.op_log_retention_days||'90';
   if(j.ports){let pl=t('set.ports_rendezvous')+j.ports.rendezvous+t('set.ports_nat')+j.ports.nat_test+t('set.ports_ws')+j.ports.ws_rendezvous+t('set.ports_relay')+j.ports.relay+t('set.ports_ws')+j.ports.ws_relay+t('set.ports_api')+j.ports.api; if(j.ports.console){pl+=t('set.ports_console')+j.ports.console_listen;}else{pl+=t('set.ports_same');} if(j.ports.tls){pl+=t('set.ports_tls');} $('ports-line').textContent=pl;}
   $('tpl-status').textContent=j.template_ready?(t('set.tpl_ready')+(j.template_version||'')):t('set.tpl_not_dl');
   pollTpl();
@@ -2821,7 +3077,8 @@ $('set-save').onclick=async()=>{
   const btn=$('set-save'); if(btn.disabled)return; btn.disabled=true;
   $('set-ok').textContent=''; $('set-err').textContent='';
   try{
-    const j=await api('/api/admin/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({public_host:$('set-host').value,api_url_override:$('set-api').value,github_mirror:$('set-mirror').value,hide_server_settings:$('set-hide').checked,allow_register:$('set-allowreg').checked,allow_remote_config:$('set-allowrc').checked,must_login:$('set-mustlogin').checked})});
+    const numOrUndef=(id)=>{const v=$(id).value.trim();if(v==='')return undefined;const n=parseInt(v,10);return isNaN(n)?undefined:n;};
+    const j=await api('/api/admin/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({public_host:$('set-host').value,api_url_override:$('set-api').value,github_mirror:$('set-mirror').value,hide_server_settings:$('set-hide').checked,allow_register:$('set-allowreg').checked,allow_remote_config:$('set-allowrc').checked,must_login:$('set-mustlogin').checked,lock_strategy:$('set-lock-strategy').value,lock_ip_enabled:$('set-lock-ip-en').checked,lock_account_enabled:$('set-lock-acct-en').checked,lock_ip_max:numOrUndef('set-lock-ip-max'),lock_account_max:numOrUndef('set-lock-acct-max'),lock_window_secs:numOrUndef('set-lock-window'),lock_ip_secs:numOrUndef('set-lock-ip-secs'),lock_account_secs:numOrUndef('set-lock-acct-secs'),op_log_retention_days:numOrUndef('set-oplog-ret')})});
     if(j.ok){$('set-ok').textContent=t('set.saved');}else{$('set-err').textContent=j.error||t('app.failed');}
   }catch(e){ if(e.message!=='unauth')$('set-err').textContent=t('app.network_err'); }
   btn.disabled=false;
