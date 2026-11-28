@@ -8,7 +8,7 @@ A self-hosted remote desktop server based on the official open-source [rustdesk-
 
 📖 **[Chinese notes (with screenshots)](docs/中文说明.md)** | 📦 **[Deployment guide](docs/DEPLOY-en.md)** | 📦 **[部署文档（中文）](docs/DEPLOY.md)**
 
-![Console device list](docs/images/console-devices.png)
+![Console device list](docs/images/console-devices-en.png)
 
 ## Extra features over the official open-source edition
 
