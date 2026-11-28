@@ -923,9 +923,15 @@ impl RendezvousServer {
 
     /// (must-login enabled, device the login token was issued for) from
     /// the account API database. One read-only connection answers both
-    /// questions. Any failure (no API database, locked, unknown token)
-    /// yields (false, None): must-login stays off and the request
-    /// proceeds as before (fail open).
+    /// questions. Three states: no API database file at all yields
+    /// (false, None) — must-login is not configured and the request
+    /// proceeds as before. A database file that exists but cannot be
+    /// opened, or whose settings/token queries fail, yields
+    /// (true, None) — fail closed: both call sites refuse via
+    /// must_login_refused, exactly as if must-login were on and the
+    /// token invalid. A token whose account is disabled
+    /// (users.disabled != 0) resolves to no device, like an unknown
+    /// token.
     async fn login_context(token: &str) -> (bool, Option<String>) {
         let path = std::env::var("API_DB_PATH").unwrap_or_else(|_| "api_v1.sqlite3".to_owned());
         Self::login_context_at(token, &path).await
@@ -945,26 +951,59 @@ impl RendezvousServer {
             .await
         {
             Ok(p) => p,
-            Err(_) => return (false, None),
+            Err(e) => {
+                log::warn!("login_context: cannot open {path}: {e}; failing closed");
+                return (true, None);
+            }
         };
-        let must_login = sqlx::query("select value from settings where key = 'must_login'")
+        let must_login = match sqlx::query("select value from settings where key = 'must_login'")
             .fetch_optional(&pool)
             .await
-            .ok()
-            .flatten()
-            .and_then(|r| r.try_get::<String, _>("value").ok())
-            .map(|v| v == "1")
-            .unwrap_or(false);
+        {
+            Ok(Some(row)) => match row.try_get::<String, _>("value") {
+                Ok(v) => v == "1",
+                Err(e) => {
+                    log::warn!("login_context: bad must_login value in {path}: {e}; failing closed");
+                    pool.close().await;
+                    return (true, None);
+                }
+            },
+            Ok(None) => false,
+            Err(e) => {
+                log::warn!("login_context: must_login query failed in {path}: {e}; failing closed");
+                pool.close().await;
+                return (true, None);
+            }
+        };
         let device_id = if token.is_empty() {
             None
         } else {
-            sqlx::query("select device_id from client_tokens where token = ?")
-                .bind(token)
-                .fetch_optional(&pool)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|r| r.try_get::<String, _>("device_id").ok())
+            match sqlx::query(
+                "select ct.device_id from client_tokens ct left join users u on u.username = ct.username where ct.token = ? and coalesce(u.disabled, 0) = 0",
+            )
+            .bind(token)
+            .fetch_optional(&pool)
+            .await
+            {
+                Ok(row) => match row {
+                    Some(row) => match row.try_get::<String, _>("device_id") {
+                        Ok(d) => Some(d),
+                        Err(e) => {
+                            log::warn!(
+                                "login_context: bad device_id in {path}: {e}; failing closed"
+                            );
+                            pool.close().await;
+                            return (true, None);
+                        }
+                    },
+                    None => None,
+                },
+                Err(e) => {
+                    log::warn!("login_context: token query failed in {path}: {e}; failing closed");
+                    pool.close().await;
+                    return (true, None);
+                }
+            }
         };
         pool.close().await;
         (must_login, device_id)
@@ -1928,9 +1967,19 @@ mod tests {
 
     /// Scratch API database for login_context tests: settings table
     /// with an optional must_login row, client_tokens table with the
-    /// given (token, device_id) rows. Each test uses its own file so
-    /// parallel tests never share state.
+    /// given (token, device_id) rows, and a users table holding the
+    /// tokens' owner 'alice' with the given disabled flag. Each test
+    /// uses its own file so parallel tests never share state.
     async fn make_login_db(tag: &str, must_login: Option<&str>, tokens: &[(&str, &str)]) -> String {
+        make_login_db_disabled(tag, must_login, tokens, false).await
+    }
+
+    async fn make_login_db_disabled(
+        tag: &str,
+        must_login: Option<&str>,
+        tokens: &[(&str, &str)],
+        alice_disabled: bool,
+    ) -> String {
         let path = std::env::temp_dir().join(format!(
             "hbbs_must_login_{}_{}.sqlite3",
             std::process::id(),
@@ -1951,6 +2000,15 @@ mod tests {
             .await
             .unwrap();
         sqlx::query("create table client_tokens(token text primary key, username text not null, device_id text not null default '', uuid text not null default '', created_at integer not null)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("create table users(id integer primary key autoincrement, username text unique not null, password_hash text not null, is_admin integer not null default 0, disabled integer not null default 0, created_at integer not null)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("insert into users(username, password_hash, disabled, created_at) values('alice', '', ?, 0)")
+            .bind(if alice_disabled { 1_i64 } else { 0_i64 })
             .execute(&pool)
             .await
             .unwrap();
@@ -1982,6 +2040,45 @@ mod tests {
         .await;
         assert!(!must_login);
         assert!(device.is_none());
+    }
+
+    #[hbb_common::tokio::test]
+    async fn login_context_disabled_user_token_invalid() {
+        // must-login on, token exists, but its owner alice is disabled:
+        // the token resolves to no device, so the request is refused.
+        let path =
+            make_login_db_disabled("disabled", Some("1"), &[("tok1", "111222333")], true).await;
+        let (must_login, device) = RendezvousServer::login_context_at("tok1", &path).await;
+        assert!(must_login);
+        assert!(device.is_none());
+        assert!(RendezvousServer::must_login_refused(must_login, &device));
+        let _ = std::fs::remove_file(&path);
+        // even with the switch off the disabled token resolves to no
+        // device (it must not authenticate a self-connection either)
+        let path =
+            make_login_db_disabled("disabled_off", Some("0"), &[("tok1", "111222333")], true)
+                .await;
+        let (must_login, device) = RendezvousServer::login_context_at("tok1", &path).await;
+        assert!(!must_login);
+        assert!(device.is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[hbb_common::tokio::test]
+    async fn login_context_existing_broken_db_fails_closed() {
+        // The file exists but is not a database: queries fail, so the
+        // result must be the fail-closed (true, None), not fail open.
+        let path = std::env::temp_dir().join(format!(
+            "hbbs_must_login_{}_broken.sqlite3",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"this is not a sqlite database").unwrap();
+        let path = path.to_string_lossy().into_owned();
+        let (must_login, device) = RendezvousServer::login_context_at("tok1", &path).await;
+        assert!(must_login);
+        assert!(device.is_none());
+        assert!(RendezvousServer::must_login_refused(must_login, &device));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[hbb_common::tokio::test]
